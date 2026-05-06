@@ -1,14 +1,6 @@
 <template>
   <div class="SGAgent-Blog-logo" :class="{ 'is-collapse': isCollapse }" @click="goToHome">
-    <svg
-        class="logo-icon"
-        viewBox="0 0 100 100"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect x="5" y="5" width="90" height="90" rx="18" stroke="currentColor" stroke-width="10" />
-      <rect x="25" y="70" width="50" height="8" fill="currentColor" class="cursor-line" />
-    </svg>
+    <img class="logo-icon" src="/logo.png" alt="SGAgent-Blog Logo" />
 
     <div class="logo-text">
       <span class="text-ctrl">SGAgent</span>
@@ -64,28 +56,21 @@ const goToHome = () => {
   transform: translateY(-1px); /* 轻微上浮，增加动感 */
 }
 
-/* SVG 图形样式 */
+/* Logo 图标样式：使用 public/logo.png */
 .logo-icon {
-  height: 80%; /* 图形高度略小于容器 */
+  height: 100%; /* 与容器同高，图片自身有留白 */
   width: auto;
+  max-height: var(--logo-height);
   margin-right: 8px;
-  color: var(--el-color-primary);
-  flex-shrink: 0; /* 防止 SVG 被压缩 */
+  flex-shrink: 0; /* 防止图片被压缩 */
+  object-fit: contain; /* 保持比例不变形 */
+  display: block;
   transition: margin-right 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 /* 折叠时：图标右边距归零 */
 .is-collapse .logo-icon {
   margin-right: 0 !important;
-}
-
-/* 光标闪烁动画 */
-.cursor-line {
-  animation: blink 1.2s infinite; /* 稍慢的闪烁，更沉稳 */
-}
-
-@keyframes blink {
-  50% { opacity: 0; }
 }
 
 .logo-text {
