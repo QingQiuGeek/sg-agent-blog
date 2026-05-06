@@ -1,0 +1,140 @@
+server:
+  port: 8080
+
+langchain4j:
+  open-ai:
+    chat-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: ${BAILIAN_API_KEY:}
+      model-name: qwen3.6-flash-2026-04-16
+      log-requests: true
+      log-responses: true
+    streaming-chat-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: ${BAILIAN_API_KEY:}
+      model-name: glm-5.1
+      log-requests: true
+      log-responses: true
+
+spring:
+  jackson:
+    default-property-inclusion: non_null  # 全局忽略 null
+  servlet:
+    multipart:
+      max-file-size: 10MB      # 单个文件最大
+      max-request-size: 10MB   # 整个请求最大
+  # 数据库配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${MYSQL_USER_NAME:}
+    password: ${MYSQL_PASSWORD:}
+    url: jdbc:mysql://localhost:3306/sg-agent-blog?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+  # Redis配置
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 3
+      # Lettuce连接池配置
+      lettuce:
+        pool:
+          # 连接池最大活跃连接数
+          max-active: 8
+          # 连接池最大空闲连接数
+          max-idle: 8
+          # 连接池最小空闲连接数
+          min-idle: 0
+          # 连接池最大阻塞等待时间（负数表示没有限制）
+          max-wait: -1ms
+      # 连接超时时间（毫秒）
+      timeout: 3000ms
+  cache:
+    type: redis  # 指定使用Redis作为缓存
+    redis:
+      time-to-live: 1800000  # 缓存过期时间，单位毫秒（30分钟）
+      cache-null-values: false  # 不缓存null值
+      key-prefix: "blog:"  # 缓存key前缀
+      use-key-prefix: true  # 使用key前缀
+  mail:
+    ## 配置邮件服务器的地址
+    host: smtp.qq.com
+    ## 配置邮件服务器的端口（465或587）
+    port: 465
+    ## 配置邮箱账号
+    username: ${MAIL_USER_NAME:}
+    ## 配置邮箱授权码
+    password: ${MAIL_AUTH_CODE:}
+    # 配置默认编码
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          socketFactory:
+            ## SSL 连接配置
+            class: javax.net.ssl.SSLSocketFactory
+        ## 是否开启 debug，这样方便开发者查看邮件发送日志
+        debug: false
+# 配置mybatis实体和xml映射
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml  # XML 文件的位置
+  type-aliases-package: com.example.springboot.entity     # 实体类包路径
+  configuration:
+    map-underscore-to-camel-case: true      # 开启驼峰命名转换
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 控制台打印 SQL (调试用)
+  global-config:
+    db-config:
+      logic-delete-field: isDeleted         # 全局逻辑删除字段名
+      logic-delete-value: 1                 # 删除后为 1
+      logic-not-delete-value: 0             # 未删除为 0
+
+blog:
+  # 站长社交链接配置
+  github-url: 'https://github.com/QingQiuGeek'
+  admin:
+    # 接收系统通知（如用户反馈）的管理员邮箱
+    email: wzhaust@qq.com
+  jwt:
+    # 签名密钥：生产环境请务必使用复杂的随机字符串（建议32位以上）
+    secret: ${JWT_SECRET:}
+    # 针对不同角色配置过期时间
+    expire:
+      user-days: 7          # 普通用户 7 天
+      admin-hours: 12       # 普通管理员 12 小时
+      super-admin-hours: 2  # 超级管理员 2 小时
+  task:
+    # 回收站保留时间 (文章、评论)
+    recycle-bin-days: 30
+    # 系统日志保留时间
+    log-retention-days: 7
+    # 注销冷静期天数
+    cancel-cooling-days: 7
+    # 消息保留天数
+    message-retention-days: 30
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 暴露所有监控端点，包括 metrics, health, info, env 等
+        # 注意：在生产环境中，应该只暴露需要的端点，或者配合 Spring Security 进行权限控制
+        include: "*"
+  endpoint:
+    health:
+      show-details: always # 显示详细的健康信息（包括磁盘空间、数据库连接状态等）
+    metrics:
+      enabled: true # 开启指标收集
+
+aj:
+  captcha:
+    # 指定使用 redis 缓存滑块数据
+    cache-type: redis
+    water-mark: SGAgent-Blog
+    bypass:
+      enabled: false
+      master-key: ${CAPTCHA_BYPASS_KEY:}
+
+oss:
+  accessKey: ${OSS_ACCESS_KEY:}
+  secretKey: ${OSS_SECRET_KEY:}
+  bucket: ${OSS_BUCKET:sg-agent-blog}
+  url: ${OSS_ENDPOINT:oss-cn-beijing.aliyuncs.com}

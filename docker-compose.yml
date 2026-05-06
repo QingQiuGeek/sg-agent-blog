@@ -1,0 +1,67 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    networks:
+      - blog-network
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager # 锁定在 Master，保护数据
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    networks:
+      - blog-network
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager # 锁定在 Master，保护数据
+
+  SGAgent-Blog-server:
+    image: crpi-no0f86ik9slq5elj.cn-hongkong.personal.cr.aliyuncs.com/SGAgent-Blog/SGAgent-Blog-server:latest
+    env_file:
+      - .env
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - FILE_STORAGE_TYPE=${FILE_STORAGE_TYPE}
+    networks:
+      - blog-network
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1 # 发版时每次更新1个副本，保证服务0中断
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+
+  SGAgent-Blog-ui:
+    image: crpi-no0f86ik9slq5elj.cn-hongkong.personal.cr.aliyuncs.com/SGAgent-Blog/SGAgent-Blog-ui:latest
+    ports:
+      - "80:80"
+    networks:
+      - blog-network
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 5s
+      restart_policy:
+        condition: on-failure
+
+networks:
+  blog-network:
+    driver: overlay # 切换为跨主机集群网络驱动
