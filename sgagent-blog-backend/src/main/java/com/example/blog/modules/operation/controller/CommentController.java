@@ -35,7 +35,7 @@ public class CommentController {
      */
     @PostMapping
     @AuthCheck
-    @RateLimit(key = "userId", time = 10, count = 1)
+    @RateLimit(key = "userId", time = 10, count = 5)
     @Log(module = "评论模块", type = "新增", desc = "用户发表了新评论/回复")
     @Operation(summary = "发布评论", description = "用户在文章下发布评论或回复他人。<br>后端会自动识别是“评论文章”还是“回复他人”。")
     public Result<Void> addComment(@Valid @RequestBody CommentAddDTO addDTO) {

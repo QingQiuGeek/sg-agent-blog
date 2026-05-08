@@ -83,6 +83,9 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
     @Resource
     private ArticleQueryManager articleQueryManager;
 
+    @Resource
+    private ArticleVectorService articleVectorService;
+
     /* ================= 以下为读操作，统统委托给 QueryManager ================= */
 
     @Override
@@ -171,6 +174,10 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
 
         articleCacheManager.clearArticleDetailCache(updateDTO.getId());
         articleCacheManager.clearGlobalArticleCache();
+
+        // 异步向量化（事务外失败不影响主流程）
+        articleVectorService.embedAndSaveAsync(
+                article.getId(), article.getTitle(), article.getSummary(), article.getContent());
     }
 
     @Override
@@ -229,6 +236,10 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
         articleTagService.updateArticleTags(article.getId(), addDTO.getTagIds());
 
         articleCacheManager.clearGlobalArticleCache();
+
+        // 异步向量化（事务外失败不影响主流程）
+        articleVectorService.embedAndSaveAsync(
+                article.getId(), article.getTitle(), article.getSummary(), article.getContent());
     }
 
     @Override

@@ -13,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -21,6 +22,8 @@ import java.util.concurrent.TimeUnit;
 
 @Aspect
 @Component
+// 通过配置 app.ratelimit.enabled=false 可以一键关闭限流（默认开启）
+@ConditionalOnProperty(name = "app.ratelimit.enabled", havingValue = "true", matchIfMissing = true)
 public class RateLimitAspect {
 
     @Resource

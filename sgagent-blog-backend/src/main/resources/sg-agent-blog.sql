@@ -361,4 +361,19 @@ CREATE TABLE `sys_user`  (
   UNIQUE INDEX `uk_email`(`email` ASC) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = ' 系统用户表 ' ROW_FORMAT = DYNAMIC;
 
+DROP TABLE IF EXISTS `article_vector`;
+CREATE TABLE `article_vector` (
+                                  `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+                                  `article_id`   BIGINT       NOT NULL COMMENT '文章ID（关联 article.id，1:1）',
+                                  `embedding`    VECTOR(1024) NOT NULL COMMENT '向量值（FLOAT 数组，由 STRING_TO_VECTOR 写入）',
+                                  `dimension`    INT          NOT NULL DEFAULT 1024 COMMENT '向量维度',
+                                  `model_name`   VARCHAR(64)  NOT NULL COMMENT '生成向量所用的模型名，例如 text-embedding-v3',
+                                  `source_hash`  CHAR(64)     NOT NULL COMMENT '源文本(标题+摘要+正文)的 SHA-256 哈希，用于跳过未变化的文章',
+                                  `create_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                  `update_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                                  PRIMARY KEY (`id`),
+                                  UNIQUE KEY `uk_article_id` (`article_id`),
+                                  KEY `idx_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文章向量表';
+
 SET FOREIGN_KEY_CHECKS = 1;
