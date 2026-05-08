@@ -30,6 +30,11 @@
                 <span>首页</span>
               </el-menu-item>
 
+              <el-menu-item index="/agent">
+                <el-icon><MagicStick /></el-icon>
+                <span>SGAgent</span>
+              </el-menu-item>
+
               <el-sub-menu index="explore">
                 <template #title>
                   <el-icon><Compass /></el-icon>
@@ -92,6 +97,11 @@
             <span>首页</span>
           </el-menu-item>
 
+          <el-menu-item index="/agent">
+            <el-icon><MagicStick /></el-icon>
+            <span>SGAgent</span>
+          </el-menu-item>
+
           <el-sub-menu index="explore" popper-class="auto-width-popper">
             <template #title>
               <el-icon><Guide /></el-icon>
@@ -131,13 +141,13 @@
     </el-header>
 
     <el-main class="page-scroll-view page-container-md-down">
-      <div class="app-container">
+      <div class="app-container" :class="{ 'app-container--full': isFullWidth }">
         <div class="main-content-wrapper">
-          <RouterView :key="route.fullPath"/>
+          <RouterView :key="routerViewKey"/>
         </div>
         <RightSideBar v-if="isShowSidebar" />
       </div>
-      <FrontFooter />
+      <FrontFooter v-if="!isFullWidth" />
     </el-main>
 
     <div class="feedback-toggle-wrapper custom-float-btn">
@@ -192,6 +202,21 @@ const handleMenuSelect = () => {
  * 根据路由 meta 中的 hideSidebar 字段判断
  */
 const isShowSidebar = computed(() => !route.meta.hideSidebar);
+
+/**
+ * 计算属性：全宽模式（如 SGAgent 页面）
+ * 去除 app-container 的 max-width / padding，并隐藏页脚
+ */
+const isFullWidth = computed(() => !!route.meta.fullWidth);
+
+/**
+ * RouterView 的 key 策略：
+ * - 默认按 fullPath 切换以触发组件重建（路由参数变化时刷新数据）
+ * - 但 SGAgent 页面 sessionId 变化时不应重建（否则会丢失正在进行的聊天状态）
+ */
+const routerViewKey = computed(() =>
+    route.name === 'SgAgentChat' ? 'SgAgentChat' : route.fullPath
+);
 
 </script>
 
@@ -309,7 +334,7 @@ html.dark .mobile-menu :deep(.el-menu-item.is-active) {
 
 .layout-container {
   height: 100vh;
-  width: 100vw;
+  width: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -354,6 +379,13 @@ html.dark .page-scroll-view {
   display: flex;
   box-sizing: border-box;
   flex: 1 0 auto;
+}
+
+/* 全宽模式：让 agent 等页面横向撒满 */
+.app-container.app-container--full {
+  max-width: none;
+  padding: 0;
+  margin: 0;
 }
 
 .main-content-wrapper {

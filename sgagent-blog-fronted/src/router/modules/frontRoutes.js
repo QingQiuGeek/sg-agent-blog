@@ -12,6 +12,12 @@ export const frontRoutes = {
             meta: { title: '主页' }
         },
         {
+            path: 'agent/:id?',
+            name: 'SgAgentChat',
+            component: () => import('@/views/front/agent/AgentChat.vue'),
+            meta: { title: 'SGAgent', hideSidebar: true, fullWidth: true, requiresAuth: true }
+        },
+        {
             path: 'archive',
             name: 'ArticleArchive',
             component: () => import('@/views/front/article/ArchiveList.vue'),

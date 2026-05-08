@@ -84,3 +84,5 @@ application-prod.yaml
 application-prod.properties
 *.local.yml
 .env
+/example/
+sg-agent-blog-pg.sql
