@@ -27,6 +27,24 @@ export function getSessionMessages(id) {
     return request({ url: `${BASE}/sessions/${id}/messages`, method: 'get' })
 }
 
+// 删除单条消息（用于单条删除与重试前清理历史）
+export function deleteMessage(id) {
+    return request({ url: `${BASE}/messages/${id}`, method: 'delete' })
+}
+
+// 上传 Agent 对话附件（OSS + Tika 提取，返回 {url, name, size, ext, content}）
+export function uploadAgentFile(file) {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request({
+        url: `${BASE}/files/upload`,
+        method: 'post',
+        data: fd,
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 60000,
+    })
+}
+
 // 发送消息（AI 回复同步返回，单次最长可能 30s+，单独放宽 timeout）
 export function sendChat(payload) {
     return request({

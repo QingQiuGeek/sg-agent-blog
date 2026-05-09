@@ -160,6 +160,14 @@ public final class Constants {
      * 文件上传子目录：AI 生成图片
      */
     public static final String UPLOAD_DIR_GEN_IMAGE = "gen-image";
+    /**
+     * 文件上传子目录：Agent 对话附件（用户在 AI 聊天中上传的文档）
+     */
+    public static final String UPLOAD_DIR_AGENT_FILE = "agent-file";
+    /**
+     * 文件上传子目录：用户私有「我的知识库」上传的文档（向量化检索使用）
+     */
+    public static final String UPLOAD_DIR_KB = "kb";
 
     // ============================== 外部资源与配置 ==============================
 

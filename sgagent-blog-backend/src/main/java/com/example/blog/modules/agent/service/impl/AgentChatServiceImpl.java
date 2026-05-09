@@ -18,6 +18,7 @@ import com.example.blog.modules.agent.model.dto.ChatRequestDTO;
 import com.example.blog.modules.agent.model.dto.SessionRenameDTO;
 import com.example.blog.modules.agent.model.entity.ChatMessage;
 import com.example.blog.modules.agent.model.entity.ChatSession;
+import com.example.blog.modules.agent.model.vo.AgentAttachmentVO;
 import com.example.blog.modules.agent.model.vo.ArticleSourceVO;
 import com.example.blog.modules.agent.model.vo.ChatMessageVO;
 import com.example.blog.modules.agent.model.vo.ChatReplyVO;
@@ -26,7 +27,11 @@ import com.example.blog.modules.agent.model.vo.ToolInvocationVO;
 import com.example.blog.modules.agent.service.AgentChatService;
 import com.example.blog.modules.agent.tools.AgentToolRegister;
 import com.example.blog.modules.agent.tools.ArticleSearchTool;
+import com.example.blog.modules.agent.tools.KnowledgeBaseSearchTool;
 import com.example.blog.modules.agent.tools.WebSearchTool;
+import com.example.blog.modules.knowledge.context.KbContext;
+import com.example.blog.modules.knowledge.mapper.KnowledgeBaseMapper;
+import com.example.blog.modules.knowledge.model.entity.KnowledgeBase;
 import com.example.blog.modules.user.model.dto.UserPayloadDTO;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
@@ -68,6 +73,10 @@ public class AgentChatServiceImpl implements AgentChatService {
               引用文章时，**必须使用工具返回的 path 字段（形如 /post/文章id）原样写成 Markdown 链接** [标题](/post/文章id)，
               **严禁自己拼接 http://xxx.com/articles/... 之类的假域名**，前端会自动按当前访问域名解析。
             - 用户询问实时信息、新闻、最新数据等 → 调用 webSearch（联网搜索）。
+            - 用户询问他个人上传到「我的知识库」里的资料（笔记、论文、报告、合同、技术文档等），
+              或明确说「在我的知识库里查/给我总结我传的 X」时 → 调用 searchKnowledgeBase。
+              只要系统提示了「本轮对话用户勾选了知识库」，就应优先调用本工具检索，再用检索结果作答；
+              回答时适当提及来源文件名（如「根据《XX.pdf》……」）。
             - 用户要求绘图/生成图片/出海报/出 icon → 优先调用 wanxGenerateImage 或 qwenGenerateImage；二者失败再降级 generateImage。
               工具返回的 `![alt](url)` Markdown 必须原样写进最终回复，否则用户看不到图。
             - 用户问当前时间/日期 → 调用 dateTimeTool。
@@ -100,6 +109,9 @@ public class AgentChatServiceImpl implements AgentChatService {
 
     @Resource
     private AgentToolRegister agentToolRegister;
+
+    @Resource
+    private KnowledgeBaseMapper knowledgeBaseMapper;
 
     /** SSE 流式回复专用线程池：守护线程 + 命名前缀，便于排查 */
     private final ExecutorService streamExecutor = Executors.newCachedThreadPool(r -> {
@@ -164,6 +176,22 @@ public class AgentChatServiceImpl implements AgentChatService {
     }
 
     @Override
+    public void deleteMessage(String messageId) {
+        if (StrUtil.isBlank(messageId)) {
+            throw new CustomerException(ResultCode.PARAM_ERROR, "消息ID不能为空");
+        }
+        ChatMessage msg = chatMessageMapper.selectById(messageId);
+        if (msg == null) {
+            throw new CustomerException(ResultCode.NOT_FOUND, "消息不存在");
+        }
+        if (!msg.getUserId().equals(currentUserId())) {
+            throw new CustomerException(ResultCode.FORBIDDEN, "无权删除该消息");
+        }
+        // @TableLogic 注解会自动把 DELETE 转为 UPDATE is_deleted=1
+        chatMessageMapper.deleteById(messageId);
+    }
+
+    @Override
     public List<ChatMessageVO> listMessages(String sessionId) {
         ChatSession session = requireOwnedSession(sessionId);
         List<ChatMessage> list = chatMessageMapper.selectList(
@@ -177,6 +205,7 @@ public class AgentChatServiceImpl implements AgentChatService {
             BeanUtil.copyProperties(m, vo);
             vo.setSources(parseJsonList(m.getSourcesJson(), ArticleSourceVO.class, "sources_json"));
             vo.setToolCalls(parseJsonList(m.getToolCallsJson(), ToolInvocationVO.class, "tool_calls_json"));
+            vo.setAttachments(parseJsonList(m.getAttachmentsJson(), AgentAttachmentVO.class, "attachments_json"));
             result.add(vo);
         }
         return result;
@@ -208,7 +237,7 @@ public class AgentChatServiceImpl implements AgentChatService {
             session = requireOwnedSession(requestDTO.getSessionId());
         }
 
-        // 2. 持久化用户消息
+        // 2. 持久化用户消息（附件元信息一并入库，content 不入库）
         String userContent = requestDTO.getContent().trim();
         ChatMessage userMsg = ChatMessage.builder()
                 .sessionId(session.getId())
@@ -216,18 +245,24 @@ public class AgentChatServiceImpl implements AgentChatService {
                 .role("user")
                 .content(userContent)
                 .tokenCount(estimateTokens(userContent))
+                .attachmentsJson(buildAttachmentsMetaJson(requestDTO.getAttachments()))
                 .isDeleted(0)
                 .build();
         chatMessageMapper.insert(userMsg);
 
         // 3. 取最近上下文 + 调模型（ReAct 循环，可能触发 tool 调用）
+        // 先把本次请求勾选的知识库（过滤 ownership）放进 ThreadLocal，tool 调用时会从中拿 kbIds
+        KbContext.set(resolveOwnedKbIds(requestDTO.getSelectedKbIds(), userId));
         LlmAnswer answer;
         try {
-            answer = callLlm(session.getId(), userContent, null);
+            answer = callLlm(session.getId(), userContent, null,
+                    resolveExcludedTools(requestDTO), requestDTO.getAttachments());
         } catch (Exception e) {
             log.error("AI 调用失败，sessionId={}", session.getId(), e);
             throw new CustomerException(ResultCode.INTERNAL_SERVER_ERROR,
                     "AI 服务暂时不可用，请稍后再试");
+        } finally {
+            KbContext.clear();
         }
 
         String reply = sanitizeArticleLinks(answer.text());
@@ -303,13 +338,14 @@ public class AgentChatServiceImpl implements AgentChatService {
                     }
                 }
 
-                // 2. 持久化用户消息
+                // 2. 持久化用户消息（附件元信息一并入库）
                 ChatMessage userMsg = ChatMessage.builder()
                         .sessionId(session.getId())
                         .userId(userId)
                         .role("user")
                         .content(content)
                         .tokenCount(estimateTokens(content))
+                        .attachmentsJson(buildAttachmentsMetaJson(requestDTO.getAttachments()))
                         .isDeleted(0)
                         .build();
                 chatMessageMapper.insert(userMsg);
@@ -320,15 +356,20 @@ public class AgentChatServiceImpl implements AgentChatService {
                         "userMessageId", userMsg.getId()));
 
                 // 4. 调 LLM（ReAct），工具调用即时推送 tool_call 事件
+                // 在异步线程中 set ThreadLocal，tool 调用时读当前用户勾选的 kbIds
+                KbContext.set(resolveOwnedKbIds(requestDTO.getSelectedKbIds(), userId));
                 LlmAnswer answer;
                 try {
                     answer = callLlm(session.getId(), content,
-                            invocation -> sendEvent(emitter, "tool_call", invocation));
+                            invocation -> sendEvent(emitter, "tool_call", invocation),
+                            resolveExcludedTools(requestDTO), requestDTO.getAttachments());
                 } catch (Exception e) {
                     log.error("AI 调用失败，sessionId={}", session.getId(), e);
                     sendEvent(emitter, "error", Map.of("msg", "AI 服务暂时不可用，请稍后再试"));
                     emitter.complete();
                     return;
+                } finally {
+                    KbContext.clear();
                 }
 
                 String reply = sanitizeArticleLinks(answer.text());
@@ -410,6 +451,99 @@ public class AgentChatServiceImpl implements AgentChatService {
             "https?://[^\\s)\\]\"']+?/(?:articles?|posts?)/(\\d+)",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
+    /**
+     * 把 attachments 列表拼成一段「文件上下文」文本，放在用户问题前面：
+     * <pre>
+     * 【用户上传的文件，以下为内容供参考】
+     * [1] foo.docx (12 KB):
+     * &lt;Tika 提取的文本&gt;
+     *
+     * [2] bar.txt (3 KB):
+     * &lt;...&gt;
+     * </pre>
+     * 总长度上限做个软约束，避免单次请求把 LLM 上下文撑爆。
+     */
+    private static final int ATTACHMENTS_TOTAL_CHAR_BUDGET = 80_000;
+
+    private String buildAttachmentsBlock(java.util.List<com.example.blog.modules.agent.model.dto.AgentAttachmentDTO> attachments) {
+        StringBuilder sb = new StringBuilder("【用户上传的文件，以下为提取的纯文本，供你回答时参考】\n");
+        int budget = ATTACHMENTS_TOTAL_CHAR_BUDGET;
+        for (int i = 0; i < attachments.size() && budget > 0; i++) {
+            var att = attachments.get(i);
+            String name = StrUtil.blankToDefault(att.getName(), "未命名文件");
+            String content = StrUtil.blankToDefault(att.getContent(), "（解析失败，无可用文本）");
+            if (content.length() > budget) {
+                content = content.substring(0, budget) + "\n…（已截断）";
+            }
+            sb.append('[').append(i + 1).append("] ").append(name);
+            if (att.getSize() != null) {
+                sb.append(" (").append(humanSize(att.getSize())).append(')');
+            }
+            sb.append(":\n").append(content).append("\n\n");
+            budget -= content.length();
+        }
+        return sb.toString().trim();
+    }
+
+    /**
+     * 把请求里的附件列表序列化为只包含元信息（不含 Tika 提取的 content）的 JSON，
+     * 用于持久化到 chat_message.attachments_json 列。
+     * <p>content 仅在本次 LLM 调用中临时使用，不入库以节省空间。
+     */
+    private String buildAttachmentsMetaJson(java.util.List<com.example.blog.modules.agent.model.dto.AgentAttachmentDTO> attachments) {
+        if (CollUtil.isEmpty(attachments)) return null;
+        java.util.List<AgentAttachmentVO> meta = new ArrayList<>(attachments.size());
+        for (var att : attachments) {
+            meta.add(AgentAttachmentVO.builder()
+                    .url(att.getUrl())
+                    .name(att.getName())
+                    .size(att.getSize())
+                    .ext(att.getExt())
+                    // 故意不写 content：避免 chat_message 表膨胀
+                    .build());
+        }
+        return JSONUtil.toJsonStr(meta);
+    }
+
+    private String humanSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        return String.format("%.1f MB", bytes / 1024.0 / 1024.0);
+    }
+
+    /**
+     * 根据 DTO 中的开关解析本次请求要从工具列表里排除的工具名集合。
+     * <ul>
+     *   <li>webSearch：开关默认关闭，用户主动点「联网搜索」才放行</li>
+     *   <li>searchKnowledgeBase：仅当 selectedKbIds 非空且都是当前用户拥有的知识库时才放行</li>
+     * </ul>
+     */
+    private java.util.Set<String> resolveExcludedTools(ChatRequestDTO dto) {
+        java.util.Set<String> excluded = new java.util.HashSet<>();
+        Boolean webSearch = dto.getWebSearchEnabled();
+        if (webSearch == null || !webSearch) {
+            excluded.add(WebSearchTool.TOOL_NAME);
+        }
+        if (KbContext.isEmpty()) {
+            excluded.add(KnowledgeBaseSearchTool.TOOL_NAME);
+        }
+        return excluded;
+    }
+
+    /**
+     * 对当前请求勾选的 kbIds 做 ownership 过滤：只保留属于当前用户、未删除的知识库。
+     * 这里干一次 DB 查询，避免 LLM 调 tool 时在 ThreadLocal 里看到别人的 kbId。
+     */
+    private java.util.List<Long> resolveOwnedKbIds(java.util.List<Long> selected, Long userId) {
+        if (CollUtil.isEmpty(selected) || userId == null) return java.util.Collections.emptyList();
+        java.util.List<KnowledgeBase> rows = knowledgeBaseMapper.selectList(
+                new LambdaQueryWrapper<KnowledgeBase>()
+                        .eq(KnowledgeBase::getUserId, userId)
+                        .in(KnowledgeBase::getId, selected));
+        if (CollUtil.isEmpty(rows)) return java.util.Collections.emptyList();
+        return rows.stream().map(KnowledgeBase::getId).toList();
+    }
+
     private String sanitizeArticleLinks(String text) {
         if (StrUtil.isBlank(text)) return text;
         java.util.regex.Matcher m = FAKE_ARTICLE_URL.matcher(text);
@@ -462,7 +596,9 @@ public class AgentChatServiceImpl implements AgentChatService {
      * 返回 LLM 最终回复 + 过程中所有 tool 调用累积的 sources
      */
     private LlmAnswer callLlm(String sessionId, String currentUserContent,
-                              Consumer<ToolInvocationVO> onToolCall) {
+                              Consumer<ToolInvocationVO> onToolCall,
+                              java.util.Set<String> excludedTools,
+                              java.util.List<com.example.blog.modules.agent.model.dto.AgentAttachmentDTO> attachments) {
         // 取最近 CONTEXT_WINDOW 条历史（含当前刚插入的 user 消息）
         List<ChatMessage> historyDesc = chatMessageMapper.selectList(
                 new LambdaQueryWrapper<ChatMessage>()
@@ -475,6 +611,16 @@ public class AgentChatServiceImpl implements AgentChatService {
 
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
         messages.add(SystemMessage.from(SYSTEM_PROMPT));
+        // 动态提示：本轮对话用户勾选了知识库时，强制 LLM 优先调 searchKnowledgeBase
+        // （仅靠静态 SYSTEM_PROMPT 描述，LLM 可能认为“闲聊”而不调用，加动态一句明示可让它必须先检索）
+        if (!KbContext.isEmpty()) {
+            int kbCount = KbContext.get().size();
+            messages.add(SystemMessage.from(
+                    "【本轮上下文】用户在本次对话中勾选了 " + kbCount + " 个「我的知识库」。\n" +
+                            "请优先调用 searchKnowledgeBase 检索这些知识库中与用户问题相关的内容后再作答；\n" +
+                            "如果检索结果为空或与问题明显不相关，再用自身知识回答。\n" +
+                            "不要说「看不到知识库」之类的话，工具调用后会返回实际内容。"));
+        }
         for (ChatMessage m : history) {
             if ("user".equals(m.getRole())) {
                 messages.add(UserMessage.from(m.getContent()));
@@ -489,6 +635,12 @@ public class AgentChatServiceImpl implements AgentChatService {
             messages.add(UserMessage.from(currentUserContent));
         }
 
+        // 附件增强：把 Tika 提取的文件文本前置拼到最后一条 user message，仅本次调用生效，不入库
+        if (CollUtil.isNotEmpty(attachments)) {
+            String enhanced = buildAttachmentsBlock(attachments) + "\n\n" + currentUserContent;
+            messages.set(messages.size() - 1, UserMessage.from(enhanced));
+        }
+
         // 收集 sources：按唯一 key 去重，保留首次出现顺序
         Map<String, ArticleSourceVO> sourceMap = new LinkedHashMap<>();
         // 收集 toolCalls：按调用顺序，列表可能有重复（多次调同一工具），全部保留
@@ -497,7 +649,7 @@ public class AgentChatServiceImpl implements AgentChatService {
         for (int step = 0; step < MAX_TOOL_STEPS; step++) {
             ChatRequest.Builder builder = ChatRequest.builder().messages(messages);
             if (!agentToolRegister.isEmpty()) {
-                builder.toolSpecifications(agentToolRegister.getSpecifications());
+                builder.toolSpecifications(agentToolRegister.getSpecifications(excludedTools));
             }
             ChatResponse response = chatModel.chat(builder.build());
             AiMessage ai = response.aiMessage();

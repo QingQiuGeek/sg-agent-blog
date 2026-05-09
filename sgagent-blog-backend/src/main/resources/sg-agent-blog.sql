@@ -406,6 +406,9 @@ CREATE TABLE `chat_message` (
                                 `role`        VARCHAR(20)  NOT NULL COMMENT '角色：user / assistant / system',
                                 `content`     MEDIUMTEXT   NOT NULL COMMENT '消息内容',
                                 `token_count` INT          NULL COMMENT '本条消息估算token',
+                                `sources_json` JSON NULL COMMENT '来源引用 JSON 数组',
+                                tool_calls_json JSON NULL COMMENT 'AI 工具调用 JSON 数组',
+                                `attachments_json` JSON NULL COMMENT '用户上传附件元信息',
                                 `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                                 `is_deleted`  TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
                                 PRIMARY KEY (`id`),
@@ -413,55 +416,62 @@ CREATE TABLE `chat_message` (
                                 KEY `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 对话消息表';
 
--- ---------------------- 3. 知识库表（预留） ----------------------
 DROP TABLE IF EXISTS `knowledge_base`;
 CREATE TABLE `knowledge_base` (
-                                  `id`          BIGINT       NOT NULL COMMENT '知识库ID',
-                                  `user_id`     BIGINT       NOT NULL COMMENT '所属用户ID',
-                                  `name`        VARCHAR(128) NOT NULL COMMENT '知识库名称',
-                                  `description` VARCHAR(500) NULL COMMENT '描述',
-                                  `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                  `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                                  `is_deleted`  TINYINT      NOT NULL DEFAULT 0,
-                                  `delete_time` DATETIME     NULL,
+                                  `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '知识库ID',
+                                  `user_id`      BIGINT       NOT NULL COMMENT '所有者用户ID',
+                                  `name`         VARCHAR(64)  NOT NULL COMMENT '知识库名称',
+                                  `description`  VARCHAR(255)          DEFAULT NULL COMMENT '知识库描述',
+                                  `file_count`   INT          NOT NULL DEFAULT 0 COMMENT '文件数量（冗余）',
+                                  `is_deleted`   TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删 1已删',
+                                  `delete_time`  DATETIME              DEFAULT NULL COMMENT '逻辑删除时间',
+                                  `create_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                  `update_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                                   PRIMARY KEY (`id`),
-                                  KEY `idx_user_update` (`user_id`, `update_time` DESC)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库表（RAG 预留）';
+                                  KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库元信息';
 
--- ---------------------- 4. 文档表（预留） ----------------------
-DROP TABLE IF EXISTS `document`;
-CREATE TABLE `document` (
-                            `id`          BIGINT       NOT NULL COMMENT '文档ID',
-                            `user_id`     BIGINT       NOT NULL COMMENT '所属用户ID',
-                            `kb_id`       BIGINT       NOT NULL COMMENT '所属知识库ID',
-                            `filename`    VARCHAR(255) NOT NULL COMMENT '文件名',
-                            `filetype`    VARCHAR(32)  NULL COMMENT 'pdf/md/txt',
-                            `size`        BIGINT       NULL COMMENT '文件字节数',
-                            `oss_url`     VARCHAR(500) NULL COMMENT '原始文件存储URL',
-                            `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                            `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                            `is_deleted`  TINYINT      NOT NULL DEFAULT 0,
-                            `delete_time` DATETIME     NULL,
-                            PRIMARY KEY (`id`),
-                            KEY `idx_kb` (`kb_id`),
-                            KEY `idx_user` (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库文档表（RAG 预留）';
 
--- ---------------------- 5. 文档向量分片表（预留） ----------------------
+DROP TABLE IF EXISTS `knowledge_base_file`;
+CREATE TABLE `knowledge_base_file` (
+                                       `id`            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '文件ID',
+                                       `kb_id`         BIGINT       NOT NULL COMMENT '所属知识库ID',
+                                       `user_id`       BIGINT       NOT NULL COMMENT '上传者用户ID（冗余便于鉴权）',
+                                       `file_name`     VARCHAR(255) NOT NULL COMMENT '原始文件名',
+                                       `file_url`      VARCHAR(500) NOT NULL COMMENT 'OSS 存储 URL',
+                                       `file_size`     BIGINT       NOT NULL DEFAULT 0 COMMENT '文件字节数',
+                                       `content_type`  VARCHAR(100)          DEFAULT NULL COMMENT 'MIME 类型',
+                                       `ext`           VARCHAR(20)           DEFAULT NULL COMMENT '扩展名（小写，无点）',
+                                       `status`        VARCHAR(20)  NOT NULL DEFAULT 'PENDING' COMMENT '向量化状态：PENDING / SUCCESS / FAILED',
+                                       `chunk_count`   INT          NOT NULL DEFAULT 0 COMMENT '已生成的向量 chunk 数',
+                                       `error_message` VARCHAR(500)          DEFAULT NULL COMMENT '失败原因（仅 status=FAILED 时有效）',
+                                       `is_deleted`    TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删 1已删',
+                                       `delete_time`   DATETIME              DEFAULT NULL COMMENT '逻辑删除时间',
+                                       `create_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                       `update_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                                       PRIMARY KEY (`id`),
+                                       KEY `idx_kb_id` (`kb_id`),
+                                       KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库文件元信息';
+
+
 DROP TABLE IF EXISTS `document_vector`;
 CREATE TABLE `document_vector` (
-                                   `id`           BIGINT       NOT NULL COMMENT '分片ID',
-                                   `kb_id`        BIGINT       NOT NULL COMMENT '所属知识库ID',
-                                   `doc_id`       BIGINT       NOT NULL COMMENT '所属文档ID',
-                                   `chunk_index`  INT          NOT NULL DEFAULT 0 COMMENT '分片序号',
-                                   `content`      TEXT         NOT NULL COMMENT '切片文本',
-                                   `embedding`    VECTOR(1024) NOT NULL COMMENT '向量值',
-                                   `dimension`    INT          NOT NULL DEFAULT 1024,
-                                   `model_name`   VARCHAR(64)  NOT NULL,
-                                   `create_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                   `id`            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+                                   `kb_id`         BIGINT       NOT NULL COMMENT '所属知识库ID（冗余便于检索过滤）',
+                                   `file_id`       BIGINT       NOT NULL COMMENT '所属文件ID',
+                                   `chunk_index`   INT          NOT NULL COMMENT 'chunk 序号（从 0 开始）',
+                                   `chunk_text`    MEDIUMTEXT   NOT NULL COMMENT 'chunk 原文，用于 RAG 上下文回填',
+                                   `embedding`     VECTOR(1024) NOT NULL COMMENT '向量值，由 STRING_TO_VECTOR 写入',
+                                   `dimension`     INT          NOT NULL DEFAULT 1024 COMMENT '向量维度',
+                                   `model_name`    VARCHAR(64)  NOT NULL COMMENT '生成向量所用的模型名',
+                                   `source_hash`   CHAR(64)     NOT NULL COMMENT 'chunk 文本的 SHA-256，用于增量去重',
+                                   `create_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                   `update_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                                    PRIMARY KEY (`id`),
-                                   KEY `idx_doc_chunk` (`doc_id`, `chunk_index`),
-                                   KEY `idx_kb` (`kb_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档向量分片表（RAG 预留）';
+                                   KEY `idx_kb_id` (`kb_id`),
+                                   KEY `idx_file_id` (`file_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库文档向量表（每 chunk 一行）';
+
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -77,18 +77,60 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- AI Token 用量统计 -->
+    <el-card class="activity-card token-usage-card" shadow="never" v-loading="tokenLoading">
+      <template #header>
+        <div class="card-header">
+          <div class="title-with-icon">
+            <el-icon class="title-icon color-primary"><DataLine /></el-icon>
+            <span class="header-title">AI 对话 Token 用量</span>
+          </div>
+          <span class="token-usage-hint">近 7 天</span>
+        </div>
+      </template>
+
+      <div class="token-usage-body">
+        <div class="token-stat-group">
+          <div class="token-stat-item">
+            <div class="token-stat-value">{{ formatTokens(tokenUsage.total) }}</div>
+            <div class="token-stat-label">总用量</div>
+          </div>
+          <el-divider direction="vertical" class="token-divider" />
+          <div class="token-stat-item">
+            <div class="token-stat-value color-primary">{{ formatTokens(tokenUsage.aiTotal) }}</div>
+            <div class="token-stat-label">AI 回复</div>
+          </div>
+          <el-divider direction="vertical" class="token-divider" />
+          <div class="token-stat-item">
+            <div class="token-stat-value color-warning">{{ formatTokens(tokenUsage.userTotal) }}</div>
+            <div class="token-stat-label">用户提问</div>
+          </div>
+        </div>
+
+        <div ref="chartRef" class="token-usage-chart"></div>
+      </div>
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUserStore } from '@/store/user.js';
 import {
   Star, Pointer, ChatDotRound, ArrowRight,
-  StarFilled, SuccessFilled
+  StarFilled, SuccessFilled, DataLine
 } from '@element-plus/icons-vue';
-import { getUserDashboardData } from "@/api/front/system/userInfo.js";
+import * as echarts from 'echarts/core';
+import { LineChart } from 'echarts/charts';
+import {
+  TitleComponent, TooltipComponent, GridComponent, LegendComponent,
+} from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
+import { getUserDashboardData, getUserTokenUsage } from "@/api/front/system/userInfo.js";
+
+echarts.use([TitleComponent, TooltipComponent, GridComponent, LegendComponent, LineChart, CanvasRenderer]);
 
 const router = useRouter();
 const userStore = useUserStore();
@@ -117,6 +159,20 @@ const recentLikes = ref([]);
 const navigateTo = (path) => path && router.push(path);
 const navToArticle = (id) => router.push(`/post/${id}`);
 
+// Token 用量状态
+const tokenLoading = ref(false)
+const tokenUsage = ref({ total: 0, aiTotal: 0, userTotal: 0, daily: [] })
+const chartRef = ref(null)
+let chartInstance = null
+
+// 数字缩写：>=1万显示 "1.2万"，>=1千显示 "1.2k"
+const formatTokens = (n) => {
+  const v = Number(n || 0)
+  if (v >= 10000) return (v / 10000).toFixed(1).replace(/\.0$/, '') + '万'
+  if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+  return v.toString()
+}
+
 // 加载数据
 const loadDashboardData = async () => {
   try {
@@ -133,9 +189,66 @@ const loadDashboardData = async () => {
   }
 };
 
+const loadTokenUsage = async () => {
+  tokenLoading.value = true
+  try {
+    const res = await getUserTokenUsage()
+    if (res.code === 200 && res.data) {
+      tokenUsage.value = res.data
+      await nextTick()
+      renderChart()
+    }
+  } catch (e) {
+    console.error('获取 Token 用量失败', e)
+  } finally {
+    tokenLoading.value = false
+  }
+}
+
+const renderChart = () => {
+  if (!chartRef.value) return
+  const daily = tokenUsage.value.daily || []
+  const dates = daily.map(d => d.date?.slice(5)) // MM-dd
+  const aiSeries = daily.map(d => d.aiTokens ?? 0)
+  const userSeries = daily.map(d => d.userTokens ?? 0)
+
+  if (!chartInstance) {
+    chartInstance = echarts.init(chartRef.value)
+  }
+  chartInstance.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['AI 回复', '用户提问'], right: 10, top: 0 },
+    grid: { left: 36, right: 16, top: 30, bottom: 24 },
+    xAxis: { type: 'category', boundaryGap: false, data: dates, axisLine: { lineStyle: { color: '#ddd' } } },
+    yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { type: 'dashed' } } },
+    series: [
+      {
+        name: 'AI 回复', type: 'line', smooth: true, symbol: 'circle', symbolSize: 6,
+        areaStyle: { opacity: 0.15 }, itemStyle: { color: '#409eff' }, data: aiSeries,
+      },
+      {
+        name: '用户提问', type: 'line', smooth: true, symbol: 'circle', symbolSize: 6,
+        areaStyle: { opacity: 0.15 }, itemStyle: { color: '#e6a23c' }, data: userSeries,
+      },
+    ],
+  }, true)
+}
+
+const onResize = () => chartInstance && chartInstance.resize()
+
 onMounted(() => {
   loadDashboardData();
+  loadTokenUsage();
+  window.addEventListener('resize', onResize)
 });
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
+})
 </script>
 
 <style scoped>
@@ -272,6 +385,54 @@ onMounted(() => {
 
 .color-warning { color: #e6a23c; }
 .color-danger { color: #f56c6c; }
+.color-primary { color: var(--el-color-primary); }
+
+/* ========== Token 用量卡片 ========== */
+.token-usage-card {
+  margin-bottom: 0;
+}
+.token-usage-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.token-usage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.token-stat-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 10px 0 4px;
+}
+.token-stat-item {
+  flex: 1;
+  text-align: center;
+}
+.token-stat-value {
+  font-family: 'SmileySans', sans-serif;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--el-text-color-primary);
+  line-height: 1.2;
+}
+.token-stat-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+.token-divider {
+  height: 36px;
+}
+.token-usage-chart {
+  width: 100%;
+  height: 240px;
+}
+@media screen and (max-width: 768px) {
+  .token-stat-value { font-size: 20px; }
+  .token-usage-chart { height: 200px; }
+}
 
 .mini-list {
   margin: -10px 0;

@@ -1,5 +1,6 @@
 package com.example.blog.modules.dashboard.service.impl;
 
+import com.example.blog.modules.agent.mapper.ChatMessageMapper;
 import com.example.blog.modules.article.model.dto.ArticleCategoryCountDTO;
 import com.example.blog.modules.article.service.ArticleService;
 import com.example.blog.modules.dashboard.model.vo.DashboardVO;
@@ -7,13 +8,20 @@ import com.example.blog.modules.dashboard.service.DashboardService;
 import com.example.blog.modules.monitor.model.vo.VisitTrendVO;
 import com.example.blog.modules.monitor.service.VisitService;
 import com.example.blog.modules.operation.service.CommentService;
+import com.example.blog.modules.user.model.vo.TokenUsageVO;
 import com.example.blog.modules.user.service.UserService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.sql.Date;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -32,6 +40,13 @@ public class DashboardServiceImpl implements DashboardService {
 
     @Resource
     private VisitService visitService;
+
+    @Resource
+    private ChatMessageMapper chatMessageMapper;
+
+    /** 近 7 天 Token 用量曲线（含今天） */
+    private static final int TOKEN_USAGE_WINDOW_DAYS = 7;
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     @Override
     @SuppressWarnings("unchecked")
@@ -68,6 +83,9 @@ public class DashboardServiceImpl implements DashboardService {
                 .filter(pie -> pie.getValue() > 0) // 过滤掉文章数为0的（可选）
                 .collect(Collectors.toList());
 
+        // 全站 Token 用量（总量 + 近 7 天曲线）
+        TokenUsageVO tokenUsage = buildAllTokenUsage();
+
         // 组装最终 DashboardVO
         return DashboardVO.builder()
                 .articleCount(articleCount)
@@ -76,6 +94,64 @@ public class DashboardServiceImpl implements DashboardService {
                 .visitCount(visitCount)
                 .visitTrend(visitTrend)
                 .categoryPie(categoryPieList)
+                .tokenUsage(tokenUsage)
                 .build();
+    }
+
+    /** 汇总全站 AI Token 用量（不按 userId 过滤） */
+    private TokenUsageVO buildAllTokenUsage() {
+        long aiTotal = 0L;
+        long userTotal = 0L;
+        for (Map<String, Object> row : chatMessageMapper.sumAllTokensGroupByRole()) {
+            String role = (String) row.get("role");
+            long total = ((Number) row.getOrDefault("total", 0L)).longValue();
+            if ("assistant".equals(role)) aiTotal = total;
+            else if ("user".equals(role)) userTotal = total;
+        }
+
+        // 0 占位 7 天，保证曲线不断点
+        LocalDate today = LocalDate.now();
+        LocalDate startDate = today.minusDays(TOKEN_USAGE_WINDOW_DAYS - 1L);
+        Map<String, TokenUsageVO.Daily> dailyMap = new LinkedHashMap<>(TOKEN_USAGE_WINDOW_DAYS);
+        for (int i = 0; i < TOKEN_USAGE_WINDOW_DAYS; i++) {
+            String key = startDate.plusDays(i).format(DATE_FMT);
+            dailyMap.put(key, TokenUsageVO.Daily.builder()
+                    .date(key).aiTokens(0L).userTokens(0L).total(0L).build());
+        }
+
+        List<Map<String, Object>> dailyRows = chatMessageMapper.sumAllTokensDailyGroupByRole(
+                startDate.atStartOfDay());
+        for (Map<String, Object> row : dailyRows) {
+            String dateKey = formatDateKey(row.get("d"));
+            if (dateKey == null) continue;
+            TokenUsageVO.Daily d = dailyMap.get(dateKey);
+            if (d == null) continue;
+            String role = (String) row.get("role");
+            long total = ((Number) row.getOrDefault("total", 0L)).longValue();
+            if ("assistant".equals(role)) {
+                d.setAiTokens(d.getAiTokens() + total);
+            } else if ("user".equals(role)) {
+                d.setUserTokens(d.getUserTokens() + total);
+            }
+            d.setTotal(d.getAiTokens() + d.getUserTokens());
+        }
+
+        return TokenUsageVO.builder()
+                .total(aiTotal + userTotal)
+                .aiTotal(aiTotal)
+                .userTotal(userTotal)
+                .daily(new ArrayList<>(dailyMap.values()))
+                .build();
+    }
+
+    /** MyBatis 对 SQL DATE() 的返回类型可能是 java.sql.Date / LocalDate / String */
+    private String formatDateKey(Object dateObj) {
+        if (dateObj == null) return null;
+        if (dateObj instanceof LocalDate ld) return ld.format(DATE_FMT);
+        if (dateObj instanceof Date d) return d.toLocalDate().format(DATE_FMT);
+        if (dateObj instanceof java.util.Date ud) {
+            return new java.sql.Date(ud.getTime()).toLocalDate().format(DATE_FMT);
+        }
+        return dateObj.toString();
     }
 }

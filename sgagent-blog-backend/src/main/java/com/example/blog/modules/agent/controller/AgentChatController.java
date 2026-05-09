@@ -75,6 +75,15 @@ public class AgentChatController {
         return Result.success(agentChatService.listMessages(id));
     }
 
+    @DeleteMapping("/messages/{id}")
+    @RateLimit(key = "userId", time = 60, count = 60)
+    @Operation(summary = "删除单条消息（用于前端单条删除 / 重试前清理历史）")
+    public Result<Void> deleteMessage(
+            @PathVariable("id") @NotBlank @Pattern(regexp = SESSION_ID_REGEX, message = "消息ID非法") String id) {
+        agentChatService.deleteMessage(id);
+        return Result.success();
+    }
+
     @PostMapping("/chat")
     @RateLimit(key = "userId", time = 60, count = 20)
     @Operation(summary = "发送消息并获取 AI 回复")

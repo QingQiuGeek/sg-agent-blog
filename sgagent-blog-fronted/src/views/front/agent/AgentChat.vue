@@ -8,7 +8,6 @@
             <img src="/logo.png" alt="SGAgent" class="brand-logo"/>
             <span class="brand-text">SGAgent</span>
           </div>
-          <el-tooltip content="收起侧边栏" placement="top">
             <el-button
                 text
                 circle
@@ -16,7 +15,6 @@
                 class="toggle-btn"
                 @click="sidebarCollapsed = true"
             />
-          </el-tooltip>
         </div>
         <el-button
             type="primary"
@@ -172,8 +170,20 @@
               </span>
             </div>
 
+            <!-- streaming 且尚未有任何文本时，气泡内显示“思考中”动画，避免空白气泡 -->
+            <div
+                v-if="m.role === 'assistant' && m.streaming && !m.content"
+                class="thinking-inline"
+                aria-label="思考中"
+            >
+              <span class="dot" />
+              <span class="dot" />
+              <span class="dot" />
+              <span class="thinking-text">思考中…</span>
+            </div>
+
             <MdPreview
-                v-if="m.role === 'assistant'"
+                v-else-if="m.role === 'assistant'"
                 :model-value="m.content || ''"
                 preview-theme="default"
                 :theme="mdTheme"
@@ -181,7 +191,33 @@
                 no-img-zoom-in
                 class="md-bubble"
             />
-            <div v-else class="text-bubble">{{ m.content }}</div>
+            <template v-else>
+              <!-- user 消息附件：从上到下纵向排列（按上传顺序） -->
+              <div v-if="m.attachments && m.attachments.length" class="msg-attachment-list">
+                <a
+                    v-for="(att, i) in m.attachments"
+                    :key="i"
+                    :href="att.url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="msg-attachment-card"
+                    :title="att.name"
+                >
+                  <div class="msg-attachment-icon">
+                    <el-icon><Document /></el-icon>
+                  </div>
+                  <div class="msg-attachment-info">
+                    <div class="msg-attachment-name">{{ att.name }}</div>
+                    <div class="msg-attachment-meta">
+                      <span class="msg-attachment-ext">{{ (att.ext || '').toUpperCase() }}</span>
+                      <span v-if="att.size">· {{ formatFileSize(att.size) }}</span>
+                    </div>
+                  </div>
+                </a>
+              </div>
+              <!-- 文本：在文件卡片下方 -->
+              <div v-if="m.content" class="text-bubble">{{ m.content }}</div>
+            </template>
 
             <!-- 来源引用：兼容 article / web 两种类型，默认折叠 -->
             <div
@@ -222,10 +258,49 @@
               </div>
             </div>
           </div>
+
+          <!-- 消息操作：复制 / 重试 / 删除；仅当消息有正式 id（已持久化）且非 streaming 时显示 -->
+          <div
+              v-if="canShowActions(m)"
+              class="message-actions"
+              :class="{ 'is-user-actions': m.role === 'user' }"
+          >
+            <el-tooltip content="复制" placement="top">
+              <el-button text size="small" class="msg-action-btn" @click="copyMessage(m)">
+                <el-icon><CopyDocument /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip content="重试" placement="top">
+              <el-button
+                  text
+                  size="small"
+                  class="msg-action-btn"
+                  :disabled="isSendingHere"
+                  @click="retryMessage(m)"
+              >
+                <el-icon><RefreshRight /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip content="删除" placement="top">
+              <el-button
+                  text
+                  size="small"
+                  class="msg-action-btn msg-action-danger"
+                  :disabled="isSendingHere"
+                  @click="deleteMessageItem(m)"
+              >
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </el-tooltip>
+          </div>
         </div>
 
-        <!-- 等待 AI 回复占位：只当当前会话与发送中的会话 id 一致才显示 -->
-        <div v-if="sendingForId && sendingForId === activeSessionId" class="message-row is-assistant">
+        <!-- 等待 AI 回复占位：
+             只在「placeholder 还没被 push 到 messages」时显示（避免与上面 streaming 气泡重复） -->
+        <div
+            v-if="sendingForId && sendingForId === activeSessionId && !hasStreamingPlaceholder"
+            class="message-row is-assistant"
+        >
           <div class="avatar">
             <div class="avatar-bot">
               <img src="/logo.png" alt="AI" class="avatar-bot-img"/>
@@ -242,19 +317,62 @@
       <!-- 输入区 -->
       <footer class="chat-input-bar">
         <div class="composer">
+          <!-- 附件卡片列表：上传中显示 spinner，上传完显示文件信息 + 删除按钮 -->
+          <div v-if="attachments.length" class="attachment-list">
+            <div
+                v-for="(att, idx) in attachments"
+                :key="att.uid"
+                class="attachment-card"
+                :class="{ 'is-loading': att.status === 'uploading', 'is-error': att.status === 'error' }"
+            >
+              <div class="attachment-icon">
+                <el-icon v-if="att.status === 'uploading'" class="is-loading"><Loading /></el-icon>
+                <el-icon v-else-if="att.status === 'error'"><CircleClose /></el-icon>
+                <el-icon v-else><Document /></el-icon>
+              </div>
+              <div class="attachment-info">
+                <div class="attachment-name" :title="att.name">{{ att.name }}</div>
+                <div class="attachment-meta">
+                  <span v-if="att.status === 'uploading'">上传解析中…</span>
+                  <span v-else-if="att.status === 'error'" class="attachment-err">{{ att.error || '上传失败' }}</span>
+                  <span v-else>{{ formatFileSize(att.size) }} · 已就绪</span>
+                </div>
+              </div>
+              <el-button
+                  text
+                  circle
+                  size="small"
+                  class="attachment-close"
+                  @click="removeAttachment(idx)"
+              >
+                <el-icon><Close /></el-icon>
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 隐藏的原生 file input：由 paperclip 按钮触发 -->
+          <input
+              ref="fileInputRef"
+              type="file"
+              multiple
+              :accept="ACCEPT_EXTENSIONS"
+              style="display: none"
+              @change="onFileChosen"
+          />
+
           <el-input
               v-model="inputText"
               type="textarea"
               :autosize="{ minRows: 1, maxRows: 6 }"
-              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              placeholder="输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴文件"
               resize="none"
               class="chat-textarea"
               @keydown.enter="handleEnter"
+              @paste="onTextareaPaste"
               :disabled="isSendingHere"
           />
           <div class="composer-toolbar">
             <div class="composer-toolbar-left">
-              <el-tooltip content="上传文件（功能开发中）" placement="top">
                 <el-button
                     text
                     circle
@@ -264,11 +382,7 @@
                 >
                   <el-icon><Paperclip /></el-icon>
                 </el-button>
-              </el-tooltip>
-              <el-tooltip
-                  :content="webSearchEnabled ? '联网搜索：已开启（功能开发中）' : '联网搜索：已关闭'"
-                  placement="top"
-              >
+          
                 <el-button
                     text
                     round
@@ -279,16 +393,70 @@
                   <el-icon><Search /></el-icon>
                   <span class="toggle-label">联网搜索</span>
                 </el-button>
-              </el-tooltip>
+
+                <!-- 知识库按钮：上拉 popover 显示多选列表，按需勾选 -->
+                <el-popover
+                    placement="top-start"
+                    :width="300"
+                    trigger="click"
+                    popper-class="kb-popover"
+                    @show="onKbPopoverShow"
+                >
+                  <template #reference>
+                    <el-button
+                        text
+                        round
+                        size="small"
+                        :class="['composer-action', 'composer-toggle', { active: selectedKbIds.length > 0 }]"
+                    >
+                      <el-icon><Collection /></el-icon>
+                      <span class="toggle-label">知识库</span>
+                      <el-badge
+                          v-if="selectedKbIds.length"
+                          :value="selectedKbIds.length"
+                          class="kb-badge"
+                      />
+                    </el-button>
+                  </template>
+
+                  <div class="kb-popover-head">
+                    <span class="kb-popover-title">我的知识库</span>
+                  </div>
+                  <div v-loading="kbLoading" class="kb-popover-body">
+                    <el-empty
+                        v-if="!kbLoading && kbList.length === 0"
+                        :image-size="60"
+                        description="暂无知识库"
+                    >
+                      <el-button size="small" type="primary" @click="goCreateKb">去创建</el-button>
+                    </el-empty>
+                    <el-checkbox-group v-else v-model="selectedKbIds" class="kb-check-list">
+                      <el-checkbox
+                          v-for="kb in kbList"
+                          :key="kb.id"
+                          :value="kb.id"
+                          class="kb-check-item"
+                      >
+                        <div class="kb-check-content">
+                          <div class="kb-check-name">{{ kb.name }}</div>
+                          <div class="kb-check-desc">{{ kb.fileCount || 0 }} 个文件{{ kb.description ? ' · ' + kb.description : '' }}</div>
+                        </div>
+                      </el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+                  <div class="kb-popover-foot">
+                    勾选后，AI 会按需检索这些知识库；不勾选则不启用知识库工具。
+                  </div>
+                </el-popover>
             </div>
             <el-button
                 type="primary"
                 :icon="Promotion"
                 class="send-btn"
-                size="default"
+                size="small"
                 :loading="isSendingHere"
                 :disabled="!inputText.trim()"
-                @click="handleSend"
+                @click="handleSend()"
             >
               发送
             </el-button>
@@ -316,6 +484,13 @@ import {
   Link,
   MagicStick,
   ArrowDown,
+  CopyDocument,
+  Delete,
+  RefreshRight,
+  Loading,
+  Close,
+  CircleClose,
+  Collection,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MdPreview } from 'md-editor-v3'
@@ -327,9 +502,12 @@ import {
   renameSession,
   deleteSession,
   getSessionMessages,
+  deleteMessage as apiDeleteMessage,
+  uploadAgentFile,
   sendChat,
   streamChat,
 } from '@/api/front/agent/agent.js'
+import { getMyKbsBrief } from '@/api/front/user/kb.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -389,13 +567,18 @@ const isSendingHere = computed(() =>
     sendingForId.value !== null
     && sendingForId.value === activeSessionId.value
 )
+// 当前 messages 列表里是否已经存在「正在 streaming 的 assistant 占位」
+// 用于避免顶部 streaming 气泡（带思考动画）跟底部独立"等待占位"同时出现
+const hasStreamingPlaceholder = computed(() =>
+    messages.value.some(m => m.role === 'assistant' && m.streaming)
+)
 const messagesEl = ref(null)
 
 const suggestions = [
-  '把我所有博客的推文数据制作成表格',
-  '哪些博客提到了Web3的知识？给我博客标题',
-  '生成一张3:4小猪佩奇图片',
-  '解释这个文件的内容（附带文件链接）',
+  '帮我查下Web3相关的博客，给我博客标题、链接',
+  '生成一张5:2高达图片',
+  '解释这个文件的内容（上传文件）',
+  '今日伊朗战争局势',
 ]
 
 /* ========== 持续打字机动画 ========== */
@@ -709,26 +892,297 @@ function toolChipType(name) {
   }
 }
 
-/* ===== 输入栏占位按钮（功能待实现）===== */
-const webSearchEnabled = ref(false)
+/* ===== 消息操作：复制 / 删除 / 重试 ===== */
 
-function onUploadFileClick() {
-  ElMessage.info('文件上传功能开发中，敬请期待')
+/**
+ * 是否展示气泡下方的操作条：
+ * - 必须有正式 id（数据库已落地，前缀 tmp- 的乐观消息暂不显示）
+ * - 排除正在 streaming 的占位 assistant 消息
+ * - assistant 消息内容为空（极个别异常）也不显示
+ */
+function canShowActions(m) {
+  if (!m || !m.id) return false
+  if (typeof m.id === 'string' && m.id.startsWith('tmp-')) return false
+  if (m.streaming) return false
+  if (m.role === 'assistant' && !m.content) return false
+  return true
 }
+
+/** 复制消息文本到剪贴板 */
+async function copyMessage(m) {
+  if (!m?.content) return
+  try {
+    await navigator.clipboard.writeText(m.content)
+    ElMessage.success('已复制')
+  } catch {
+    // 兜底：低版本浏览器或非 https 环境
+    const ta = document.createElement('textarea')
+    ta.value = m.content
+    document.body.appendChild(ta)
+    ta.select()
+    try { document.execCommand('copy'); ElMessage.success('已复制') }
+    catch { ElMessage.error('复制失败，请手动选择') }
+    finally { document.body.removeChild(ta) }
+  }
+}
+
+/** 删除单条消息：确认 → 调接口 → 本地数组移除 */
+async function deleteMessageItem(m) {
+  if (!m?.id) return
+  try {
+    await ElMessageBox.confirm('确定删除这条消息？', '删除确认', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch { return /* 用户取消 */ }
+  try {
+    await apiDeleteMessage(m.id)
+    const idx = messages.value.findIndex(x => x.id === m.id)
+    if (idx > -1) messages.value.splice(idx, 1)
+    ElMessage.success('已删除')
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
+/**
+ * 重试消息：
+ * - user 消息：删除该消息及其后所有消息（前后端同步）→ 用相同 content 重新发送
+ * - assistant 消息：找到它前面最近一条 user 消息作为 retry 源 → 删除从该 user 起的所有消息 → 重新发送
+ *
+ * 重发依赖 callLlm 取数据库历史，所以必须先把这些消息从数据库删掉，避免重复对话污染上下文。
+ */
+async function retryMessage(m) {
+  if (!m?.id || isSendingHere.value) return
+
+  // 1. 找出"重发起点"——必为某条 user 消息
+  let anchor = m
+  if (m.role === 'assistant') {
+    const myIdx = messages.value.findIndex(x => x.id === m.id)
+    if (myIdx <= 0) {
+      ElMessage.warning('找不到对应的用户提问')
+      return
+    }
+    // 反向找最近一条 user
+    for (let i = myIdx - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'user') {
+        anchor = messages.value[i]
+        break
+      }
+    }
+    if (anchor.role !== 'user') {
+      ElMessage.warning('找不到对应的用户提问')
+      return
+    }
+  }
+  const retryContent = anchor.content
+  if (!retryContent) return
+
+  const anchorIdx = messages.value.findIndex(x => x.id === anchor.id)
+  if (anchorIdx < 0) return
+
+  // 2. 收集起点及以后所有"已落地"消息（带正式 id），调批量接口删除
+  const tail = messages.value.slice(anchorIdx)
+  const idsToDelete = tail
+      .filter(x => x.id && !(typeof x.id === 'string' && x.id.startsWith('tmp-')))
+      .map(x => x.id)
+
+  try {
+    await Promise.all(idsToDelete.map(id => apiDeleteMessage(id)))
+  } catch (e) {
+    ElMessage.error('清理历史消息失败，重试已取消')
+    return
+  }
+
+  // 3. 本地从 anchor 起截断
+  messages.value.splice(anchorIdx)
+
+  // 4. 复用 handleSend 重新发送
+  await handleSend(retryContent)
+}
+
+/* ===== 联网搜索 ===== */
+const webSearchEnabled = ref(false)
 
 function onToggleWebSearch() {
   webSearchEnabled.value = !webSearchEnabled.value
-  ElMessage.info(
-    webSearchEnabled.value
-      ? '联网搜索切换为开启（功能开发中，本次开关暂不影响 AI 行为）'
-      : '联网搜索切换为关闭'
-  )
 }
 
-async function handleSend() {
+/* ===== 知识库多选 =====
+ * 仅在引用面板打开时拉取一次列表，避免页面进入就预请求
+ * selectedKbIds 隨请求带上；所以 selectedKbIds 以多个会话 / 页面生命周期共享是可接受的
+ */
+const selectedKbIds = ref([])
+const kbList = ref([])
+const kbLoading = ref(false)
+
+async function onKbPopoverShow() {
+  if (!requireLogin('请先登录后再使用知识库')) return
+  kbLoading.value = true
+  try {
+    const res = await getMyKbsBrief()
+    if (res?.code === 200) {
+      kbList.value = res.data || []
+      // 已选中但被删除的 kbId 顺手清掉，避免发请求时被后端 ownership 过滤后静默丢弃
+      const liveIds = new Set(kbList.value.map(k => k.id))
+      selectedKbIds.value = selectedKbIds.value.filter(id => liveIds.has(id))
+    }
+  } finally {
+    kbLoading.value = false
+  }
+}
+
+function goCreateKb() {
+  router.push('/user/kbs')
+}
+
+/* ===== 附件上传 ===== */
+
+/** 与后端 ALLOWED_EXTENSIONS 保持同步：超出此白名单前端就直接拒绝，不发请求 */
+const ALLOWED_EXTENSIONS = new Set([
+  // 文档
+  'md', 'txt', 'docx', 'doc', 'rtf', 'odt', 'pdf',
+  // 表格
+  'xlsx', 'xls', 'csv', 'tsv',
+  // 数据
+  'json', 'xml', 'yaml', 'yml', 'toml', 'ini', 'properties', 'log',
+  // 网页
+  'html', 'htm', 'css',
+  // 代码
+  'java', 'kt', 'scala', 'groovy',
+  'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'vue', 'svelte',
+  'py', 'rb', 'php', 'go', 'rs',
+  'c', 'cc', 'cpp', 'cxx', 'h', 'hpp',
+  'cs', 'swift', 'm', 'mm',
+  'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd',
+  'sql', 'graphql', 'gql', 'proto',
+  'dockerfile', 'makefile', 'gradle',
+])
+
+/** input[type=file] accept 属性值，仅作输入提示，真正校验在 onFileChosen */
+const ACCEPT_EXTENSIONS = Array.from(ALLOWED_EXTENSIONS).map(e => '.' + e).join(',')
+
+/** 单文件最大 5MB；与后端一致 */
+const MAX_FILE_SIZE = 5 * 1024 * 1024
+/** 同时存在的最大文件数 */
+const MAX_ATTACHMENTS = 5
+
+/** 已选附件列表：每项含上传状态 */
+const attachments = ref([])
+const fileInputRef = ref(null)
+
+function onUploadFileClick() {
+  if (!requireLogin('请先登录后再上传文件')) return
+  fileInputRef.value?.click()
+}
+
+/** input change 回调：批量校验 + 并发上传 */
+async function onFileChosen(e) {
+  const files = Array.from(e.target.files || [])
+  // 重置 input value，让用户可以再次选择同一个文件
+  e.target.value = ''
+  await processFiles(files)
+}
+
+/**
+ * textarea 粘贴事件：clipboardData.files 有内容时拦截默认行为去走上传，
+ * 其他情况（粘贴文本）保持默认行为，不影响输入。
+ */
+async function onTextareaPaste(e) {
+  const cd = e.clipboardData || window.clipboardData
+  if (!cd) return
+  const files = Array.from(cd.files || [])
+  if (!files.length) return  // 粘贴的是文本，不接管
+  e.preventDefault()
+  if (!requireLogin('请先登录后再上传文件')) return
+  await processFiles(files)
+}
+
+/** 共用：批量校验 + 并发上传到 attachments */
+async function processFiles(files) {
+  if (!files || !files.length) return
+  for (const f of files) {
+    if (attachments.value.length >= MAX_ATTACHMENTS) {
+      ElMessage.warning(`最多上传 ${MAX_ATTACHMENTS} 个文件`)
+      break
+    }
+    const ext = (f.name.split('.').pop() || '').toLowerCase()
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      ElMessage.error(`不支持的文件类型：${f.name}（不允许 .${ext}）`)
+      continue
+    }
+    if (f.size > MAX_FILE_SIZE) {
+      ElMessage.error(`文件超过 5MB：${f.name}`)
+      continue
+    }
+
+    const item = {
+      uid: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: f.name,
+      size: f.size,
+      ext,
+      status: 'uploading',  // uploading | done | error
+      error: null,
+      url: null,
+      content: null,
+    }
+    attachments.value.push(item)
+
+    // 并发上传：每个文件独立 promise，互不阻塞
+    uploadAgentFile(f)
+        .then(res => {
+          const data = res?.data || res
+          const target = attachments.value.find(a => a.uid === item.uid)
+          if (!target) return
+          target.url = data.url
+          target.size = data.size ?? f.size
+          target.ext = (data.ext || ext).toLowerCase()
+          target.content = data.content || ''
+          target.status = 'done'
+        })
+        .catch(err => {
+          const target = attachments.value.find(a => a.uid === item.uid)
+          if (!target) return
+          target.status = 'error'
+          target.error = err?.message || '上传失败'
+          ElMessage.error(`${item.name}：${target.error}`)
+        })
+  }
+}
+
+function removeAttachment(idx) {
+  attachments.value.splice(idx, 1)
+}
+
+/** 工具：把 size 转成可读字符串 */
+function formatFileSize(bytes) {
+  if (bytes == null) return ''
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+async function handleSend(forcedContent) {
   if (!requireLogin('请先登录后再发送消息')) return
-  const content = inputText.value.trim()
+  const content = (forcedContent ?? inputText.value).trim()
   if (!content || isSendingHere.value) return
+
+  // 附件状态校验：仍在上传中阻断；有失败项让用户先处理
+  if (attachments.value.some(a => a.status === 'uploading')) {
+    ElMessage.warning('文件还在解析中，请稍候')
+    return
+  }
+  if (attachments.value.some(a => a.status === 'error')) {
+    ElMessage.warning('有文件上传失败，请先移除再发送')
+    return
+  }
+  // 仅取已就绪的附件，构造后端期望的 DTO 形态
+  const sendAttachments = attachments.value
+      .filter(a => a.status === 'done')
+      .map(a => ({
+        url: a.url, name: a.name, size: a.size, ext: a.ext, content: a.content,
+      }))
 
   // 首条消息：先创建后端会话，拿到 id 后立即 push URL 并刷新侧栏
   let idForThisSend = activeSessionId.value
@@ -750,15 +1204,20 @@ async function handleSend() {
     }
   }
 
-  // 乐观追加用户消息
+  // 乐观追加用户消息（带附件元信息，与后端持久化字段一致）
   const optimistic = {
     id: 'tmp-' + Date.now(),
     role: 'user',
     content,
+    attachments: sendAttachments.length
+        ? sendAttachments.map(a => ({ url: a.url, name: a.name, size: a.size, ext: a.ext }))
+        : null,
     createTime: new Date().toISOString(),
   }
   messages.value.push(optimistic)
-  inputText.value = ''
+  if (forcedContent === undefined) inputText.value = ''  // 重试场景不动输入框
+  // 附件已随本次请求"消费"，立即清空 UI；失败时也不保留（避免重复发送）
+  if (sendAttachments.length) attachments.value = []
   await scrollToBottom()
 
   // 乐观更新标题：首条消息后立即同步到侧栏 / header（无需等 AI 回复）
@@ -800,7 +1259,13 @@ async function handleSend() {
   let stopped = false
   try {
     await streamChat(
-        { sessionId: idForThisSend, content },
+        {
+          sessionId: idForThisSend,
+          content,
+          webSearchEnabled: webSearchEnabled.value,
+          attachments: sendAttachments,
+          selectedKbIds: selectedKbIds.value.length ? selectedKbIds.value : null,
+        },
         {
           onMeta: (data) => {
             if (data?.userMessageId) optimistic.id = data.userMessageId
@@ -1217,6 +1682,7 @@ function formatTime(dt) {
 /* ========== 消息气泡 ========== */
 .message-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin: 0 auto 18px;
   max-width: 860px;
@@ -1225,6 +1691,41 @@ function formatTime(dt) {
 
 .message-row.is-user {
   flex-direction: row-reverse;
+}
+
+/* 操作条：换到第二行，与气泡起点对齐；hover 父行才显示 */
+.message-actions {
+  flex-basis: 100%;
+  display: flex;
+  gap: 4px;
+  /* avatar 宽度 36 + gap 10 = 46，让按钮对齐 bubble 起点 */
+  padding-left: 46px;
+  margin-top: -4px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.message-actions.is-user-actions {
+  padding-left: 0;
+  padding-right: 46px;
+  justify-content: flex-end;
+}
+.message-row:hover .message-actions {
+  opacity: 1;
+}
+.msg-action-btn {
+  height: 26px;
+  padding: 0 8px !important;
+  color: var(--el-text-color-secondary);
+}
+.msg-action-btn:hover {
+  color: var(--el-color-primary);
+  background: var(--el-fill-color-light);
+}
+.msg-action-btn.msg-action-danger:hover {
+  color: var(--el-color-danger);
+}
+.msg-action-btn.is-disabled {
+  opacity: 0.4;
 }
 
 .avatar {
@@ -1274,6 +1775,73 @@ function formatTime(dt) {
 
 .text-bubble {
   white-space: pre-wrap;
+}
+
+/* ========== 已发送消息中的附件卡片：纵向，文件在上、文本在下 ========== */
+.msg-attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+.msg-attachment-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.18);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.18s;
+  min-width: 0;
+}
+.msg-attachment-card:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+/* 助手气泡内（理论上目前 user 才显示，预留以防扩展） */
+.bubble.assistant .msg-attachment-card {
+  background: var(--el-fill-color);
+}
+.bubble.assistant .msg-attachment-card:hover {
+  background: var(--el-fill-color-darker);
+}
+.msg-attachment-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+.bubble.assistant .msg-attachment-icon {
+  background: var(--el-color-primary-light-8);
+  color: var(--el-color-primary);
+}
+.msg-attachment-info {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.msg-attachment-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-attachment-meta {
+  opacity: 0.8;
+  font-size: 11px;
+  margin-top: 1px;
+}
+.msg-attachment-ext {
+  font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 /* md-editor 预览样式去除其默认外边距 */
@@ -1449,6 +2017,18 @@ function formatTime(dt) {
   background: var(--el-color-primary-light-9);
 }
 
+/* ========== 知识库按钮角标（小数字气泡） ========== */
+.kb-badge {
+  margin-left: 2px;
+}
+.kb-badge :deep(.el-badge__content) {
+  height: 14px;
+  line-height: 14px;
+  padding: 0 5px;
+  font-size: 10px;
+  border: none;
+}
+
 /* ========== 来源引用卡片 ========== */
 .source-card-tag {
   display: inline-block;
@@ -1547,6 +2127,21 @@ function formatTime(dt) {
   padding: 14px 16px;
 }
 
+/* 气泡内的思考动画（streaming 但 content 还为空时）：
+   .dot 的关键帧已在下方定义，这里只控制布局 + 文字 */
+.thinking-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+.thinking-inline .thinking-text {
+  margin-left: 6px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  letter-spacing: 0.5px;
+}
+
 .dot {
   width: 6px;
   height: 6px;
@@ -1598,9 +2193,89 @@ function formatTime(dt) {
 }
 
 .send-btn {
-  height: 40px;
-  padding: 0 18px;
-  border-radius: 10px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+/* ========== 附件卡片 ========== */
+.attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 4px 8px;
+}
+.attachment-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+  min-width: 180px;
+  max-width: 240px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.attachment-card.is-loading {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+}
+.attachment-card.is-error {
+  border-color: var(--el-color-danger-light-5);
+  background: var(--el-color-danger-light-9);
+}
+.attachment-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--el-color-primary-light-8);
+  color: var(--el-color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+.attachment-card.is-error .attachment-icon {
+  background: var(--el-color-danger-light-8);
+  color: var(--el-color-danger);
+}
+.attachment-icon .is-loading {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.attachment-info {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+.attachment-name {
+  color: var(--el-text-color-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-meta {
+  color: var(--el-text-color-secondary);
+  margin-top: 2px;
+}
+.attachment-meta .attachment-err {
+  color: var(--el-color-danger);
+}
+.attachment-close {
+  padding: 0 !important;
+  width: 22px !important;
+  height: 22px !important;
+  color: var(--el-text-color-secondary);
+}
+.attachment-close:hover {
+  color: var(--el-color-danger);
 }
 
 /* ========== 响应式：移动端折起侧边栏 ========== */
@@ -1620,5 +2295,73 @@ function formatTime(dt) {
   .suggestion-grid {
     grid-template-columns: 1fr;
   }
+}
+</style>
+
+<!-- popover 渲染到 body 下，作用域选择器选不到，这里用全局样式 -->
+<style>
+.kb-popover.el-popover {
+  padding: 0 !important;
+  border-radius: 10px;
+}
+.kb-popover .kb-popover-head {
+  padding: 10px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.kb-popover .kb-popover-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.kb-popover .kb-popover-body {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+.kb-popover .kb-check-list {
+  display: flex;
+  flex-direction: column;
+}
+.kb-popover .kb-check-item {
+  margin-right: 0;
+  width: 100%;
+  padding: 6px 14px;
+  height: auto;
+  white-space: normal;
+}
+.kb-popover .kb-check-item:hover {
+  background: var(--el-fill-color-light);
+}
+.kb-popover .kb-check-item .el-checkbox__label {
+  width: 100%;
+  padding-left: 8px;
+}
+.kb-popover .kb-check-content {
+  display: flex;
+  flex-direction: column;
+}
+.kb-popover .kb-check-name {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  line-height: 1.4;
+}
+.kb-popover .kb-check-desc {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 2px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-popover .kb-popover-foot {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  border-top: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-lighter);
 }
 </style>

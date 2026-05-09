@@ -6,6 +6,7 @@ import com.example.blog.common.base.PageQueryDTO;
 import com.example.blog.modules.user.model.dto.UserChangeEmailDTO;
 import com.example.blog.modules.user.model.dto.UserChangePwdDTO;
 import com.example.blog.modules.user.model.dto.UserProfileUpdateDTO;
+import com.example.blog.modules.user.model.vo.TokenUsageVO;
 import com.example.blog.modules.user.model.vo.UserDashboardVO;
 import com.example.blog.modules.article.model.vo.ArticleSimpleVO;
 import com.example.blog.modules.operation.model.vo.UserCommentVO;
@@ -30,6 +31,11 @@ public interface UserProfileService {
      * @return 包含统计数据和近期动态的 VO
      */
     UserDashboardVO getUserDashboardData();
+
+    /**
+     * 获取当前用户 AI 对话 Token 用量统计（总量 + 近 7 天每日曲线）
+     */
+    TokenUsageVO getTokenUsage();
 
     /**
      * 分页获取我的收藏列表

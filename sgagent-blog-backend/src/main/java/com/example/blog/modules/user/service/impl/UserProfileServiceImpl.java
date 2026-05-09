@@ -36,6 +36,8 @@ import com.example.blog.common.utils.MailService;
 import com.example.blog.core.security.PasswordEncoderUtil;
 import com.example.blog.common.utils.RedisUtil;
 import com.example.blog.core.security.UserContext;
+import com.example.blog.modules.agent.mapper.ChatMessageMapper;
+import com.example.blog.modules.user.model.vo.TokenUsageVO;
 import com.example.blog.modules.user.model.vo.UserDashboardVO;
 import com.example.blog.modules.article.model.vo.ArticleSimpleVO;
 import com.example.blog.modules.operation.model.vo.UserCommentVO;
@@ -45,8 +47,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
+import java.sql.Date;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -83,6 +90,9 @@ public class UserProfileServiceImpl extends ServiceImpl<UserMapper, User> implem
 
     @Resource
     private RedisUtil redisUtil;
+
+    @Resource
+    private ChatMessageMapper chatMessageMapper;
 
     /**
      * 通用用户修改操作前置校验
@@ -206,6 +216,74 @@ public class UserProfileServiceImpl extends ServiceImpl<UserMapper, User> implem
                 .recentFavorites(recentFavorites)
                 .recentLikes(recentLikes)
                 .build();
+    }
+
+    /** 近 7 天 Token 用量曲线起算的天数（含今天，所以是 6 天前） */
+    private static final int TOKEN_USAGE_WINDOW_DAYS = 7;
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+    @Override
+    public TokenUsageVO getTokenUsage() {
+        UserPayloadDTO currentUser = UserContext.get();
+        if (currentUser == null) {
+            throw new CustomerException(ResultCode.UNAUTHORIZED, MessageConstants.MSG_NOT_LOGIN);
+        }
+        Long userId = currentUser.getId();
+
+        // 1. 总量（按 role 分组）
+        long aiTotal = 0L;
+        long userTotal = 0L;
+        for (Map<String, Object> row : chatMessageMapper.sumTokensByUserGroupByRole(userId)) {
+            String role = (String) row.get("role");
+            long total = ((Number) row.getOrDefault("total", 0L)).longValue();
+            if ("assistant".equals(role)) aiTotal = total;
+            else if ("user".equals(role)) userTotal = total;
+        }
+
+        // 2. 近 7 天每日用量：先填 0 占位，再用查询结果覆盖。保证曲线连续不断点。
+        LocalDate today = LocalDate.now();
+        LocalDate startDate = today.minusDays(TOKEN_USAGE_WINDOW_DAYS - 1L);
+        Map<String, TokenUsageVO.Daily> dailyMap = new LinkedHashMap<>(TOKEN_USAGE_WINDOW_DAYS);
+        for (int i = 0; i < TOKEN_USAGE_WINDOW_DAYS; i++) {
+            String key = startDate.plusDays(i).format(DATE_FMT);
+            dailyMap.put(key, TokenUsageVO.Daily.builder()
+                    .date(key).aiTokens(0L).userTokens(0L).total(0L).build());
+        }
+
+        List<Map<String, Object>> dailyRows = chatMessageMapper.sumTokensByUserDailyGroupByRole(
+                userId, startDate.atStartOfDay());
+        for (Map<String, Object> row : dailyRows) {
+            String dateKey = formatDateKey(row.get("d"));
+            if (dateKey == null) continue;
+            TokenUsageVO.Daily d = dailyMap.get(dateKey);
+            if (d == null) continue; // 理论不会越界，防御性
+            String role = (String) row.get("role");
+            long total = ((Number) row.getOrDefault("total", 0L)).longValue();
+            if ("assistant".equals(role)) {
+                d.setAiTokens(d.getAiTokens() + total);
+            } else if ("user".equals(role)) {
+                d.setUserTokens(d.getUserTokens() + total);
+            }
+            d.setTotal(d.getAiTokens() + d.getUserTokens());
+        }
+
+        return TokenUsageVO.builder()
+                .total(aiTotal + userTotal)
+                .aiTotal(aiTotal)
+                .userTotal(userTotal)
+                .daily(new ArrayList<>(dailyMap.values()))
+                .build();
+    }
+
+    /** MyBatis 对 SQL DATE() 的返回类型可能是 java.sql.Date / LocalDate / String，统一格式化为 yyyy-MM-dd */
+    private String formatDateKey(Object dateObj) {
+        if (dateObj == null) return null;
+        if (dateObj instanceof LocalDate ld) return ld.format(DATE_FMT);
+        if (dateObj instanceof Date d) return d.toLocalDate().format(DATE_FMT);
+        if (dateObj instanceof java.util.Date ud) {
+            return new java.sql.Date(ud.getTime()).toLocalDate().format(DATE_FMT);
+        }
+        return dateObj.toString();
     }
 
     @Override

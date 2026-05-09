@@ -37,4 +37,7 @@ public class ArticleQueryDTO extends PageQueryDTO {
     @Schema(description = "是否置顶(0:否, 1:是)")
     private Integer isTop;
 
+    @Schema(description = "作者ID（仅后端内部使用：用于「我的文章」按当前用户过滤；前端无需传，会被覆盖）", hidden = true)
+    private Long userId;
+
 }

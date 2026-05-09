@@ -62,6 +62,17 @@
               <span>个人总览</span>
             </el-menu-item>
 
+            <el-menu-item-group title="我的创作">
+              <el-menu-item index="/user/articles">
+                <el-icon><Document /></el-icon>
+                <span>我的文章</span>
+              </el-menu-item>
+              <el-menu-item index="/user/kbs">
+                <el-icon><Collection /></el-icon>
+                <span>我的知识库</span>
+              </el-menu-item>
+            </el-menu-item-group>
+
             <el-menu-item-group title="我的互动">
               <el-menu-item index="/user/collections">
                 <el-icon><Star /></el-icon>

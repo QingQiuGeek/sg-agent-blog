@@ -426,6 +426,7 @@ public class ArticleQueryManager {
                 .eq(queryDTO.getCategoryId() != null, Article::getCategoryId, queryDTO.getCategoryId())
                 .eq(queryDTO.getStatus() != null, Article::getStatus, queryDTO.getStatus()) // 新增：文章状态精准查询
                 .eq(queryDTO.getIsTop() != null, Article::getIsTop, queryDTO.getIsTop())    // 新增：置顶状态精准查询
+                .eq(queryDTO.getUserId() != null, Article::getUserId, queryDTO.getUserId()) // 「我的文章」按作者过滤（仅后端注入）
                 .orderByDesc(Article::getIsTop)
                 .orderByDesc(Article::getCreateTime);
         IPage<Article> articleIPage  = articleMapper.selectPage(page, articleQueryWrapper);

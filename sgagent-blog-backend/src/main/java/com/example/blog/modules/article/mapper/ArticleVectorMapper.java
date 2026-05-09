@@ -42,15 +42,18 @@ public interface ArticleVectorMapper {
     int deleteByArticleId(@Param("articleId") Long articleId);
 
     /**
-     * 拉取所有可检索的文章向量及其元信息，余弦距离在 Java 端计算
-     * <p>
-     * 之所以不在 SQL 里做 top-K：MySQL 9.x 社区版只提供 STRING_TO_VECTOR / VECTOR_TO_STRING，
-     * DISTANCE 函数仅 HeatWave 与 Oracle Cloud 版本支持，社区版调用会报
-     * "FUNCTION DISTANCE does not exist"。
-     * <p>
-     * 数据量上来后可以换成 pgvector / Milvus，或升级到 HeatWave 启用真正的向量索引。
+     * 拉取候选文章向量集，余弦距离在 Java 端计算（MySQL 9.x 社区版无 DISTANCE 函数）。
+     * <p>支持按分类名 / 标签名 / 作者昵称做「元数据预过滤」，相当于「Filter-then-Score」式
+     * hybrid retrieval：显著缩小候选集，避免无关分类/作者/标签的文章混入语义召回结果。
+     * <p>所有过滤参数都是可选的；同时给出多个时按 AND 逻辑。
+     * <p>数据量上来后可换成 pgvector / Milvus，或升级到 HeatWave 启用向量索引。
+     *
+     * @param categoryName 精确匹配分类名（如「Spring Boot」），空则不过滤
+     * @param tagNames     标签名列表（任一命中即可），空则不过滤
+     * @param authorName   精确匹配作者昵称，空则不过滤
      */
     @Select("""
+            <script>
             SELECT a.id              AS articleId,
                    a.title           AS title,
                    a.summary         AS summary,
@@ -65,8 +68,29 @@ public interface ArticleVectorMapper {
             FROM article_vector av
             JOIN blog_article a ON a.id = av.article_id
             LEFT JOIN sys_user u ON u.id = a.user_id
+            <if test="categoryName != null and categoryName != ''">
+                JOIN blog_category c ON c.id = a.category_id
+            </if>
             WHERE a.is_deleted = 0
               AND a.status = 1
+            <if test="categoryName != null and categoryName != ''">
+              AND c.name = #{categoryName}
+            </if>
+            <if test="authorName != null and authorName != ''">
+              AND u.nickname = #{authorName}
+            </if>
+            <if test="tagNames != null and tagNames.size() > 0">
+              AND EXISTS (
+                SELECT 1 FROM blog_article_tag at
+                JOIN blog_tag t ON t.id = at.tag_id
+                WHERE at.article_id = a.id
+                  AND t.name IN
+                  <foreach collection="tagNames" item="tn" open="(" separator="," close=")">#{tn}</foreach>
+              )
+            </if>
+            </script>
             """)
-    List<Map<String, Object>> listAllForSearch();
+    List<Map<String, Object>> listAllForSearch(@Param("categoryName") String categoryName,
+                                               @Param("tagNames") List<String> tagNames,
+                                               @Param("authorName") String authorName);
 }

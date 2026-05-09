@@ -19,6 +19,14 @@ export function getUserDashboardData() {
     })
 }
 
+// 2.1 获取当前用户 AI Token 用量统计（总量 + 近 7 天曲线）
+export function getUserTokenUsage() {
+    return request({
+        url: `${BASE_URL}/token-usage`,
+        method: 'get'
+    })
+}
+
 // 3. 更新用户基本信息
 export function updateProfile(data) {
     return request({

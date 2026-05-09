@@ -82,6 +82,23 @@ public class AgentToolRegister {
     }
 
     /**
+     * 按名字过滤后的工具规格列表，用于按用户开关动态屏蔽某些工具。
+     * @param excludedNames 要排除的工具 @Tool name 集合（null/empty 等价于全量）
+     */
+    public List<ToolSpecification> getSpecifications(java.util.Set<String> excludedNames) {
+        if (excludedNames == null || excludedNames.isEmpty()) {
+            return getSpecifications();
+        }
+        List<ToolSpecification> filtered = new ArrayList<>(specifications.size());
+        for (ToolSpecification spec : specifications) {
+            if (!excludedNames.contains(spec.name())) {
+                filtered.add(spec);
+            }
+        }
+        return Collections.unmodifiableList(filtered);
+    }
+
+    /**
      * 执行一次工具调用，返回工具的字符串结果（已是 JSON 或纯文本）
      * 失败时返回错误描述，由调用方决定是否重试
      */

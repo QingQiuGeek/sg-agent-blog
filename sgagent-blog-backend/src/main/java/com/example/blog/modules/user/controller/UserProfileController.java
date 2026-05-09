@@ -13,6 +13,7 @@ import com.example.blog.modules.user.model.dto.UserChangeEmailDTO;
 import com.example.blog.modules.user.model.dto.UserChangePwdDTO;
 import com.example.blog.modules.user.model.dto.UserProfileUpdateDTO;
 import com.example.blog.modules.user.service.UserProfileService;
+import com.example.blog.modules.user.model.vo.TokenUsageVO;
 import com.example.blog.modules.user.model.vo.UserDashboardVO;
 import com.example.blog.modules.article.model.vo.ArticleSimpleVO;
 import com.example.blog.modules.operation.model.vo.UserCommentVO;
@@ -55,6 +56,15 @@ public class UserProfileController {
     public Result<UserDashboardVO> getUserDashboardData() {
         UserDashboardVO dashboardVO = userProfileService.getUserDashboardData();
         return Result.success(dashboardVO);
+    }
+
+    /**
+     * 获取 AI 对话 Token 用量统计
+     */
+    @GetMapping("/token-usage")
+    @Operation(summary = "AI Token 用量统计", description = "返回总用量、AI/用户各自用量，以及近 7 天每日曲线数据。")
+    public Result<TokenUsageVO> getTokenUsage() {
+        return Result.success(userProfileService.getTokenUsage());
     }
 
     /**

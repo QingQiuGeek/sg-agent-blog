@@ -29,6 +29,9 @@ public interface AgentChatService {
     /** 获取会话历史消息（按时间正序） */
     List<ChatMessageVO> listMessages(String sessionId);
 
+    /** 删除单条消息（逻辑删除，仅本人可删） */
+    void deleteMessage(String messageId);
+
     /** 发送消息并同步获取 AI 回复（阻塞式） */
     ChatReplyVO chat(ChatRequestDTO requestDTO);
 

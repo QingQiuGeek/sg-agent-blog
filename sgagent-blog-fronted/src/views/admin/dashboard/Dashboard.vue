@@ -30,8 +30,35 @@
         </div>
       </el-col>
 
-      <el-col :sm="24" :md="16"><div class="card chart-card" id="line"></div></el-col>
-      <el-col :sm="24" :md="8"><div class="card chart-card" id="pie"></div></el-col>
+      <el-col :sm="24" :md="10"><div class="card chart-card" id="line"></div></el-col>
+
+      <el-col :sm="24" :md="14">
+        <div class="card chart-card token-card">
+          <div class="token-header">
+            <span class="token-title">全站 AI Token 用量</span>
+            <span class="token-hint">近 7 天</span>
+          </div>
+
+          <div class="token-stats">
+            <div class="token-stat-item">
+              <div class="token-stat-value">{{ formatTokens(tokenData.total) }}</div>
+              <div class="token-stat-label">总用量</div>
+            </div>
+            <div class="token-divider"></div>
+            <div class="token-stat-item">
+              <div class="token-stat-value color-primary">{{ formatTokens(tokenData.aiTotal) }}</div>
+              <div class="token-stat-label">AI 回复</div>
+            </div>
+            <div class="token-divider"></div>
+            <div class="token-stat-item">
+              <div class="token-stat-value color-warning">{{ formatTokens(tokenData.userTotal) }}</div>
+              <div class="token-stat-label">用户提问</div>
+            </div>
+          </div>
+
+          <div id="token-chart" class="token-chart"></div>
+        </div>
+      </el-col>
     </el-row>
   </div>
 </template>
@@ -46,11 +73,20 @@ import { useRequest } from "@/composables/useRequest.js"; // 引入 Hook
 const isDark = useDark();
 
 const data = reactive({ articleCount: 0, userCount: 0, commentCount: 0, visitCount: 0 });
+const tokenData = reactive({ total: 0, aiTotal: 0, userTotal: 0, daily: [] });
+
+// 数字缩写：>=1万 -> "1.2万"，>=1千 -> "1.2k"
+const formatTokens = (n) => {
+  const v = Number(n || 0)
+  if (v >= 10000) return (v / 10000).toFixed(1).replace(/\.0$/, '') + '万'
+  if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+  return v.toString()
+}
 
 let currentTrendData = null;
-let currentCategoryData = null;
+let currentTokenDaily = null;
 let lineChart = null;
-let pieChart = null;
+let tokenChart = null;
 let resizeTimer = null;
 
 // 使用 useRequest 接管数据请求
@@ -67,10 +103,8 @@ onUnmounted(() => {
 });
 
 watch(isDark, () => {
-  if (currentTrendData && currentCategoryData) {
-    renderLineChart(currentTrendData);
-    renderPieChart(currentCategoryData);
-  }
+  if (currentTrendData) renderLineChart(currentTrendData);
+  if (currentTokenDaily) renderTokenChart(currentTokenDaily);
 });
 
 const initDashboard = async () => {
@@ -83,11 +117,18 @@ const initDashboard = async () => {
     data.visitCount = resData.visitCount;
 
     currentTrendData = resData.visitTrend;
-    currentCategoryData = resData.categoryPie;
+
+    if (resData.tokenUsage) {
+      tokenData.total = resData.tokenUsage.total ?? 0
+      tokenData.aiTotal = resData.tokenUsage.aiTotal ?? 0
+      tokenData.userTotal = resData.tokenUsage.userTotal ?? 0
+      tokenData.daily = resData.tokenUsage.daily ?? []
+      currentTokenDaily = tokenData.daily
+    }
 
     await nextTick(() => {
       renderLineChart(currentTrendData);
-      renderPieChart(currentCategoryData);
+      if (currentTokenDaily) renderTokenChart(currentTokenDaily);
     });
   }
 };
@@ -103,34 +144,46 @@ const renderLineChart = (trendData) => {
   setTimeout(() => lineChart.resize(), 100);
 }
 
-const renderPieChart = (categoryData) => {
-  let chartDom = document.getElementById('pie');
-  if (pieChart) pieChart.dispose();
-  pieChart = echarts.init(chartDom, isDark.value ? 'dark' : null);
-  pieOption.backgroundColor = 'transparent';
-  pieOption.series[0].itemStyle.borderColor = isDark.value ? '#1d1e1f' : '#ffffff';
-  pieOption.series[0].data = categoryData || [];
-  pieChart.setOption(pieOption);
-  setTimeout(() => pieChart.resize(), 100);
+const renderTokenChart = (daily) => {
+  const chartDom = document.getElementById('token-chart');
+  if (!chartDom) return;
+  if (tokenChart) tokenChart.dispose();
+  tokenChart = echarts.init(chartDom, isDark.value ? 'dark' : null);
+  const dates = (daily || []).map(d => d.date?.slice(5));
+  const aiSeries = (daily || []).map(d => d.aiTokens ?? 0);
+  const userSeries = (daily || []).map(d => d.userTokens ?? 0);
+  tokenChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['AI 回复', '用户提问'], right: 10, top: 0 },
+    grid: { left: 36, right: 16, top: 30, bottom: 24 },
+    xAxis: { type: 'category', boundaryGap: false, data: dates },
+    yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { type: 'dashed' } } },
+    series: [
+      { name: 'AI 回复', type: 'line', smooth: true, symbol: 'circle', symbolSize: 6,
+        areaStyle: { opacity: 0.15 }, itemStyle: { color: '#409eff' }, data: aiSeries },
+      { name: '用户提问', type: 'line', smooth: true, symbol: 'circle', symbolSize: 6,
+        areaStyle: { opacity: 0.15 }, itemStyle: { color: '#e6a23c' }, data: userSeries },
+    ],
+  });
+  setTimeout(() => tokenChart.resize(), 100);
 }
 
 const handleResize = () => {
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     if (lineChart) lineChart.resize({ animation: { duration: 0 } });
-    if (pieChart) pieChart.resize({ animation: { duration: 0 } });
+    if (tokenChart) tokenChart.resize({ animation: { duration: 0 } });
   }, 200);
 };
 
 const disposeCharts = () => {
   if (lineChart) { lineChart.dispose(); lineChart = null; }
-  if (pieChart) { pieChart.dispose(); pieChart = null; }
+  if (tokenChart) { tokenChart.dispose(); tokenChart = null; }
 };
 
 // ================= ECharts 配置 =================
-// (图表配置对象 lineOption 和 pieOption 保持你原有的配置不变，这里省略以节省空间)
 let lineOption = { title: { text: '近7天访问量', left: 'left', }, grid: { left: '8%', right: '8%', bottom: '8%', top: '15%', containLabel: true }, xAxis: { type: 'category', data: [] }, tooltip: { trigger: 'axis', formatter: '{b} <br/>访客 : {c}' }, yAxis: { type: 'value' }, series: [ { data: [], type: 'line', smooth: true } ] };
-let pieOption = { title: { text: '分类统计', left: 'left' }, tooltip: { trigger: 'item' }, legend: { top: '10%', orient: 'vertical', left: 'left' }, series: [ { name: '分类统计', type: 'pie', radius: ['40%', '70%'], center: ['60%', '55%'], avoidLabelOverlap: false, itemStyle: { borderRadius: 10, borderWidth: 2 }, label: { show: false, position: 'center' }, emphasis: { label: { show: true, fontSize: 30, fontWeight: 'bold' } }, labelLine: { show: false }, data: [] } ] };
 </script>
 
 <style scoped>
@@ -192,4 +245,60 @@ let pieOption = { title: { text: '分类统计', left: 'left' }, tooltip: { trig
   overflow: hidden;
   padding: 15px;
 }
+
+/* ==========================================
+   Token 用量卡片
+   ========================================== */
+.token-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.token-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.token-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.token-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.token-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 6px 0 4px;
+}
+.token-stat-item {
+  flex: 1;
+  text-align: center;
+}
+.token-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--el-text-color-primary);
+  line-height: 1.1;
+}
+.token-stat-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+.token-divider {
+  width: 1px;
+  height: 36px;
+  background: var(--el-border-color-lighter);
+}
+.token-chart {
+  flex: 1;
+  width: 100%;
+  min-height: 240px;
+}
+.color-primary { color: var(--el-color-primary); }
+.color-warning { color: #e6a23c; }
 </style>

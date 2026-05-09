@@ -83,7 +83,10 @@ public class ArticleVectorServiceImpl implements ArticleVectorService {
     }
 
     @Override
-    public List<ArticleHitVO> searchByQuery(String query, int topK) {
+    public List<ArticleHitVO> searchByQuery(String query, int topK,
+                                            String categoryName,
+                                            List<String> tagNames,
+                                            String authorName) {
         if (StrUtil.isBlank(query)) {
             return Collections.emptyList();
         }
@@ -93,8 +96,11 @@ public class ArticleVectorServiceImpl implements ArticleVectorService {
             Response<Embedding> response = embeddingModel.embed(query);
             float[] qv = response.content().vector();
 
-            // MySQL 9 社区版没有 DISTANCE 函数，余弦相似度在 Java 端算
-            List<Map<String, Object>> rows = articleVectorMapper.listAllForSearch();
+            // 元数据预过滤 + Java 端余弦相似度（MySQL 9 社区版无 DISTANCE 函数）
+            List<Map<String, Object>> rows = articleVectorMapper.listAllForSearch(
+                    StrUtil.trimToNull(categoryName),
+                    tagNames,
+                    StrUtil.trimToNull(authorName));
             List<ArticleHitVO> hits = new ArrayList<>(rows.size());
             for (Map<String, Object> row : rows) {
                 String embStr = (String) row.get("embeddingStr");
@@ -126,8 +132,9 @@ public class ArticleVectorServiceImpl implements ArticleVectorService {
             }
             hits.sort(Comparator.comparingDouble(ArticleHitVO::getScore).reversed());
             List<ArticleHitVO> topHits = hits.size() > safeTopK ? hits.subList(0, safeTopK) : hits;
-            log.info("文章语义检索：query=[{}], topK={}, scanned={}, hits={}, cost={}ms",
-                    query, safeTopK, rows.size(), topHits.size(), System.currentTimeMillis() - start);
+            log.info("文章语义检索：query=[{}], topK={}, filter=[cat={}, tags={}, author={}], scanned={}, hits={}, cost={}ms",
+                    query, safeTopK, categoryName, tagNames, authorName,
+                    rows.size(), topHits.size(), System.currentTimeMillis() - start);
             return new ArrayList<>(topHits);
         } catch (Exception e) {
             log.error("文章语义检索失败：query=[{}]，{}", query, e.getMessage(), e);

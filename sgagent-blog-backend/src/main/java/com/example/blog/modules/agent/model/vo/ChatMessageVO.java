@@ -26,4 +26,7 @@ public class ChatMessageVO {
 
     @Schema(description = "AI 消息生成过程中的工具调用记录（仅 assistant 消息可能有值）")
     private List<ToolInvocationVO> toolCalls;
+
+    @Schema(description = "用户上传附件元信息（仅 user 消息可能有值，不含提取文本）")
+    private List<AgentAttachmentVO> attachments;
 }

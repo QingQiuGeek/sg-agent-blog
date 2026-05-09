@@ -38,6 +38,9 @@ public class DashboardVO {
     @Schema(description = "文章分类占比列表")
     private List<CategoryPie> categoryPie;
 
+    @Schema(description = "全站 AI Token 用量统计（总量 + 近 7 天曲线）")
+    private com.example.blog.modules.user.model.vo.TokenUsageVO tokenUsage;
+
     // ================== 3. 静态内部类定义 ==================
 
     /**

@@ -27,5 +27,20 @@ public interface ArticleVectorService {
      * @param query 用户查询文本（自然语言）
      * @param topK  返回前 K 条，建议 1-10
      */
-    List<ArticleHitVO> searchByQuery(String query, int topK);
+    default List<ArticleHitVO> searchByQuery(String query, int topK) {
+        return searchByQuery(query, topK, null, null, null);
+    }
+
+    /**
+     * 带元数据过滤的语义检索：先用 categoryName / tagNames / authorName 缩小候选集，
+     * 再算余弦相似度并取 top-K。
+     *
+     * @param categoryName 分类名精确匹配，可空
+     * @param tagNames     标签名列表（任一命中），可空
+     * @param authorName   作者昵称精确匹配，可空
+     */
+    List<ArticleHitVO> searchByQuery(String query, int topK,
+                                     String categoryName,
+                                     List<String> tagNames,
+                                     String authorName);
 }

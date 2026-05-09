@@ -52,6 +52,13 @@ public class ChatMessage implements Serializable {
     @TableField("tool_calls_json")
     private String toolCallsJson;
 
+    /**
+     * 用户上传附件元信息 JSON（仅 user 消息可能有值，不含 Tika 提取文本）
+     * 数组形式：[{"url":"...","name":"a.docx","size":1234,"ext":"docx"}]
+     */
+    @TableField("attachments_json")
+    private String attachmentsJson;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

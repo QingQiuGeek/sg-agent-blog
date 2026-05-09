@@ -60,6 +60,9 @@ export const frontRoutes = {
             meta: { requiresAuth: true, hideSidebar: true },
             children: [
                 { path: 'dashboard', component: () => import('@/views/front/user/UserDashboard.vue') },
+                { path: 'articles', component: () => import('@/views/front/user/MyArticles.vue') },
+                { path: 'kbs', component: () => import('@/views/front/user/KnowledgeBaseList.vue') },
+                { path: 'kbs/:kbId', component: () => import('@/views/front/user/KnowledgeBaseDetail.vue') },
                 { path: 'collections', component: () => import('@/views/front/user/Collections.vue') },
                 { path: 'likes', component: () => import('@/views/front/user/Likes.vue') },
                 { path: 'comments', component: () => import('@/views/front/user/Comments.vue') },
