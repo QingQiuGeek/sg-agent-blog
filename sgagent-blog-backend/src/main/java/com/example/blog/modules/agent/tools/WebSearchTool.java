@@ -1,0 +1,120 @@
+package com.example.blog.modules.agent.tools;
+
+import cn.hutool.core.util.StrUtil;
+import cn.hutool.http.HttpRequest;
+import cn.hutool.http.HttpResponse;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
+import dev.langchain4j.agent.tool.P;
+import dev.langchain4j.agent.tool.Tool;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+/**
+ * @author: qingqiugeek
+ * @date: 2026/5/4 09:16
+ * @description: WebSearch agent tool
+ */
+@Component
+@Slf4j
+public class WebSearchTool implements ITool {
+
+    public static final String TOOL_NAME = "webSearch";
+
+    @Value("${tavily.url:}")
+    private String url;
+
+    @Value("${tavily.api-key:}")
+    private String apiKey;
+
+    @Override
+    public String getName() {
+        return TOOL_NAME;
+    }
+
+    @Override
+    public String getDescription() {
+        return "联网搜索";
+    }
+
+    @Tool(
+            name = TOOL_NAME,
+            value = "Search the web in real-time when the user asks about news, recent events, or any topic that needs up-to-date information from the internet. Returns a JSON string with a 'results' array (each item: title, url, content, score) and an 'images' array."
+    )
+    public String webSearch(
+            @P(value = "Search query in natural language; must be concise and specific, not null")
+            String query
+    ) {
+        if (StrUtil.isBlank(query)) {
+            return errorJson("query cannot be empty");
+        }
+        if (StrUtil.isBlank(apiKey)) {
+            return errorJson("Tavily api key is not configured (tavily.api-key / TAVILY_API_KEY)");
+        }
+
+        try {
+            JSONObject body = new JSONObject()
+                    .set("query", query)
+                    .set("search_depth", "basic")
+                    .set("max_results", 5)
+                    .set("include_answer", false)
+                    .set("include_images", true)
+                    .set("include_raw_content", false);
+
+            log.info("[WebSearchTool] query={}", query);
+            try (HttpResponse resp = HttpRequest.post(url)
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .body(body.toString())
+                    .timeout(10_000)
+                    .execute()) {
+
+                String respBody = resp.body();
+                if (!resp.isOk()) {
+                    log.warn("[WebSearchTool] tavily error status={} body={}", resp.getStatus(), respBody);
+                    return errorJson("tavily http " + resp.getStatus() + ": " + respBody);
+                }
+
+                JSONObject json = JSONUtil.parseObj(respBody);
+
+                // 仅保留模型需要的字段，避免 token 浪费
+                JSONArray simplifiedResults = new JSONArray();
+                JSONArray rawResults = json.getJSONArray("results");
+                if (rawResults != null) {
+                    for (int i = 0; i < rawResults.size(); i++) {
+                        JSONObject item = rawResults.getJSONObject(i);
+                        simplifiedResults.add(new JSONObject()
+                                .set("title", item.getStr("title", ""))
+                                .set("url", item.getStr("url", ""))
+                                .set("content", item.getStr("content", ""))
+                                .set("score", item.getDouble("score", 0d)));
+                    }
+                }
+
+                JSONArray images = json.getJSONArray("images");
+                if (images == null) {
+                    images = new JSONArray();
+                }
+
+                return new JSONObject()
+                        .set("query", query)
+                        .set("results", simplifiedResults)
+                        .set("images", images)
+                        .toString();
+            }
+        } catch (Exception e) {
+            log.error("[WebSearchTool] error", e);
+            return errorJson("web search failed: " + e.getMessage());
+        }
+    }
+
+    private String errorJson(String message) {
+        return new JSONObject()
+                .set("error", message)
+                .set("results", new JSONArray())
+                .set("images", new JSONArray())
+                .toString();
+    }
+}

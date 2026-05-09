@@ -15,7 +15,7 @@ export const frontRoutes = {
             path: 'agent/:id?',
             name: 'SgAgentChat',
             component: () => import('@/views/front/agent/AgentChat.vue'),
-            meta: { title: 'SGAgent', hideSidebar: true, fullWidth: true, requiresAuth: true }
+            meta: { title: 'SGAgent', hideSidebar: true, fullWidth: true }
         },
         {
             path: 'archive',

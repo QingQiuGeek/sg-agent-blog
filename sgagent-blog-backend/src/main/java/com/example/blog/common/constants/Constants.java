@@ -156,6 +156,10 @@ public final class Constants {
      * 文件上传子目录：文章正文配图
      */
     public static final String UPLOAD_DIR_ARTICLE = "article";
+    /**
+     * 文件上传子目录：AI 生成图片
+     */
+    public static final String UPLOAD_DIR_GEN_IMAGE = "gen-image";
 
     // ============================== 外部资源与配置 ==============================
 

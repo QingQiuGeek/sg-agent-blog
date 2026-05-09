@@ -11,6 +11,14 @@ import './assets/css/common.css'
 import zhCn from "element-plus/es/locale/lang/zh-cn";
 
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import { config as mdEditorConfig } from 'md-editor-v3'
+
+// AI 图片工具会返回 raw <img> 标签，需要打开 markdown-it 的 html 选项才能渲染
+mdEditorConfig({
+    markdownItConfig(md) {
+        md.set({ html: true })
+    },
+})
 
 const app = createApp(App)
 

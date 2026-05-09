@@ -38,6 +38,20 @@ public class ChatMessage implements Serializable {
 
     private Integer tokenCount;
 
+    /**
+     * AI 回复关联的来源引用 JSON（仅 assistant 消息可能有值）
+     * 数组形式：[{"articleId":1,"title":"...","author":"..."}]
+     */
+    @TableField("sources_json")
+    private String sourcesJson;
+
+    /**
+     * AI 回复过程中调用过的工具 JSON（仅 assistant 消息可能有值）
+     * 数组形式：[{"name":"searchArticles","label":"站内文章搜索","summary":"Web3"}]
+     */
+    @TableField("tool_calls_json")
+    private String toolCallsJson;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

@@ -15,8 +15,10 @@ import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import org.springframework.http.MediaType;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
@@ -78,5 +80,15 @@ public class AgentChatController {
     @Operation(summary = "发送消息并获取 AI 回复")
     public Result<ChatReplyVO> chat(@Valid @RequestBody ChatRequestDTO dto) {
         return Result.success(agentChatService.chat(dto));
+    }
+
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RateLimit(key = "userId", time = 60, count = 20)
+    @Operation(summary = "发送消息并以 SSE 流式返回 AI 回复")
+    public SseEmitter chatStream(@Valid @RequestBody ChatRequestDTO dto) {
+        // 5 分钟超时，覆盖大部分多轮工具调用场景
+        SseEmitter emitter = new SseEmitter(5 * 60 * 1000L);
+        agentChatService.chatStream(dto, emitter);
+        return emitter;
     }
 }

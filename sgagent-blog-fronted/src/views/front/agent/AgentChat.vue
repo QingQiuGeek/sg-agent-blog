@@ -149,7 +149,29 @@
               <img src="/logo.png" alt="AI" class="avatar-bot-img"/>
             </div>
           </div>
-          <div class="bubble" :class="m.role">
+          <div class="bubble" :class="m.role" @click="onBubbleClick">
+            <!-- 工具调用 chips：仅 assistant 消息且本次调用过工具时显示 -->
+            <div
+                v-if="m.role === 'assistant' && m.toolCalls && m.toolCalls.length"
+                class="tool-calls-block"
+            >
+              <span
+                  v-for="(t, idx) in m.toolCalls"
+                  :key="idx"
+                  class="tool-chip"
+                  :class="`tool-chip--${toolChipType(t.name) || 'default'}`"
+                  :title="t.summary ? `${t.label || t.name} · ${t.summary}` : (t.label || t.name)"
+              >
+                <el-icon class="tool-chip-icon">
+                  <component :is="toolChipIcon(t.name)" />
+                </el-icon>
+                <span class="tool-chip-text">
+                  <span class="tool-chip-label">{{ t.label || t.name }}</span>
+                  <span v-if="t.summary" class="tool-chip-summary">· {{ truncateSummary(t.summary) }}</span>
+                </span>
+              </span>
+            </div>
+
             <MdPreview
                 v-if="m.role === 'assistant'"
                 :model-value="m.content || ''"
@@ -160,6 +182,45 @@
                 class="md-bubble"
             />
             <div v-else class="text-bubble">{{ m.content }}</div>
+
+            <!-- 来源引用：兼容 article / web 两种类型，默认折叠 -->
+            <div
+                v-if="m.role === 'assistant' && m.sources && m.sources.length"
+                class="sources-block"
+            >
+              <div
+                  class="sources-title"
+                  role="button"
+                  tabindex="0"
+                  @click="toggleSources(m.id)"
+                  @keydown.enter.prevent="toggleSources(m.id)"
+                  @keydown.space.prevent="toggleSources(m.id)"
+              >
+                <el-icon><Document /></el-icon>
+                <span>来源 · 共 {{ m.sources.length }} 条引用</span>
+                <el-icon class="sources-toggle-icon" :class="{ 'is-open': isSourcesOpen(m.id) }">
+                  <ArrowDown />
+                </el-icon>
+              </div>
+              <div v-show="isSourcesOpen(m.id)" class="sources-list">
+                <div
+                    v-for="(s, idx) in m.sources"
+                    :key="idx"
+                    class="source-card"
+                    @click="goToSource(s)"
+                >
+                  <div class="source-card-title">{{ s.title }}</div>
+                  <div class="source-card-meta">
+                    <span v-if="s.type === 'web'" class="source-card-tag">联网</span>
+                    <span v-else class="source-card-tag">站内</span>
+                    <span v-if="s.author">· {{ s.author }}</span>
+                    <span v-if="s.type === 'web' && s.url" class="source-card-host">
+                      · {{ formatHost(s.url) }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -180,26 +241,59 @@
 
       <!-- 输入区 -->
       <footer class="chat-input-bar">
-        <el-input
-            v-model="inputText"
-            type="textarea"
-            :autosize="{ minRows: 1, maxRows: 6 }"
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-            resize="none"
-            class="chat-textarea"
-            @keydown.enter="handleEnter"
-            :disabled="isSendingHere"
-        />
-        <el-button
-            type="primary"
-            :icon="Promotion"
-            class="send-btn"
-            :loading="isSendingHere"
-            :disabled="!inputText.trim()"
-            @click="handleSend"
-        >
-          发送
-        </el-button>
+        <div class="composer">
+          <el-input
+              v-model="inputText"
+              type="textarea"
+              :autosize="{ minRows: 1, maxRows: 6 }"
+              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              resize="none"
+              class="chat-textarea"
+              @keydown.enter="handleEnter"
+              :disabled="isSendingHere"
+          />
+          <div class="composer-toolbar">
+            <div class="composer-toolbar-left">
+              <el-tooltip content="上传文件（功能开发中）" placement="top">
+                <el-button
+                    text
+                    circle
+                    size="small"
+                    class="composer-action"
+                    @click="onUploadFileClick"
+                >
+                  <el-icon><Paperclip /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip
+                  :content="webSearchEnabled ? '联网搜索：已开启（功能开发中）' : '联网搜索：已关闭'"
+                  placement="top"
+              >
+                <el-button
+                    text
+                    round
+                    size="small"
+                    :class="['composer-action', 'composer-toggle', { active: webSearchEnabled }]"
+                    @click="onToggleWebSearch"
+                >
+                  <el-icon><Search /></el-icon>
+                  <span class="toggle-label">联网搜索</span>
+                </el-button>
+              </el-tooltip>
+            </div>
+            <el-button
+                type="primary"
+                :icon="Promotion"
+                class="send-btn"
+                size="default"
+                :loading="isSendingHere"
+                :disabled="!inputText.trim()"
+                @click="handleSend"
+            >
+              发送
+            </el-button>
+          </div>
+        </div>
       </footer>
     </main>
   </div>
@@ -213,6 +307,15 @@ import {
   Fold,
   Expand,
   Promotion,
+  UserFilled,
+  Document,
+  Paperclip,
+  Search,
+  Picture,
+  Clock,
+  Link,
+  MagicStick,
+  ArrowDown,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MdPreview } from 'md-editor-v3'
@@ -225,6 +328,7 @@ import {
   deleteSession,
   getSessionMessages,
   sendChat,
+  streamChat,
 } from '@/api/front/agent/agent.js'
 
 const route = useRoute()
@@ -232,6 +336,23 @@ const router = useRouter()
 
 const userStore = useUserStore()
 const userAvatar = computed(() => userStore.userInfo?.avatar || '')
+
+/* ========== 登录守卫 ========== */
+const isLoggedIn = computed(() => userStore.isLoggedIn)
+
+function promptLogin(tip = '请先登录后再使用 SGAgent') {
+  ElMessage.warning(tip)
+  userStore.openAuthDialog('login')
+}
+
+/** 行为前置守卫：未登录时弹出登录提示并返回 false */
+function requireLogin(tip) {
+  if (!isLoggedIn.value) {
+    promptLogin(tip)
+    return false
+  }
+  return true
+}
 
 /* ========== md-editor 主题：跟随全局 html.dark ========== */
 const mdTheme = ref(document.documentElement.classList.contains('dark') ? 'dark' : 'light')
@@ -271,9 +392,9 @@ const isSendingHere = computed(() =>
 const messagesEl = ref(null)
 
 const suggestions = [
-  '我有几篇推文，把推文数据制作成表格',
+  '把我所有博客的推文数据制作成表格',
   '哪些博客提到了Web3的知识？给我博客标题',
-  '生成一张小猪佩奇图片',
+  '生成一张3:4小猪佩奇图片',
   '解释这个文件的内容（附带文件链接）',
 ]
 
@@ -348,8 +469,30 @@ function stopTyping() {
 
 /* ========== 初始化与路由同步 ========== */
 onMounted(async () => {
+  if (!isLoggedIn.value) {
+    // 未登录：仅展示欢迎屏，不调任何接口；若路径携带会话 id 则回退根路径
+    if (route.params.id) {
+      router.replace('/agent')
+    } else {
+      startTyping()
+    }
+    return
+  }
   await loadSessions()
   await syncFromRoute()
+})
+
+// 登录状态变化：登录后自动载入会话；登出后清空
+watch(isLoggedIn, async (val) => {
+  if (val) {
+    await loadSessions()
+    await syncFromRoute()
+  } else {
+    sessions.value = []
+    messages.value = []
+    activeSessionId.value = null
+    sendingForId.value = null
+  }
 })
 
 onBeforeUnmount(() => stopTyping())
@@ -364,6 +507,11 @@ watch(() => route.params.id, () => {
 async function syncFromRoute() {
   const id = route.params.id || null
   if (id) {
+    // 未登录：禁止根据 id 拉历史，回退欢迎屏
+    if (!isLoggedIn.value) {
+      router.replace('/agent')
+      return
+    }
     if (id !== activeSessionId.value) {
       await switchSession(id)
     }
@@ -412,6 +560,7 @@ function handleSelectSession(id) {
 // “新建会话”：仅本地重置态，不调后端 API；
 // 发出首条消息时才创建后端会话
 async function handleNewSession() {
+  if (!requireLogin('请先登录后再新建会话')) return
   if (route.params.id) {
     router.push('/agent')
   } else {
@@ -474,7 +623,110 @@ function sendQuick(text) {
   handleSend()
 }
 
+/**
+ * 气泡内 click 代理：拦截所有 <a> 标签点击 → 新标签页打开
+ * - 相对路径（如 /post/123）通过 new URL(href, location.href) 解析为当前 origin 的绝对地址
+ * - 绝对外链直接 window.open
+ * - 锚点 #xxx 不拦截，交给浏览器默认行为
+ */
+function onBubbleClick(e) {
+  const a = e.target.closest('a')
+  if (!a) return
+  const href = a.getAttribute('href')
+  if (!href || href.startsWith('#')) return
+  e.preventDefault()
+  const absolute = new URL(href, window.location.href).href
+  window.open(absolute, '_blank', 'noopener,noreferrer')
+}
+
+/** 来源卡片点击：article 跳站内详情，web 直接外链 */
+function goToSource(s) {
+  if (!s) return
+  if (s.type === 'web' && s.url) {
+    window.open(s.url, '_blank', 'noopener')
+    return
+  }
+  if (s.articleId) {
+    const url = router.resolve(`/post/${s.articleId}`).href
+    window.open(url, '_blank', 'noopener')
+  }
+}
+
+/** 截取 URL 的 host 部分用于卡片副标题 */
+function formatHost(url) {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+/** 工具调用 chip 图标映射（按 @Tool name 分发） */
+function toolChipIcon(name) {
+  switch (name) {
+    case 'searchArticles': return Document
+    case 'webSearch':      return Link
+    case 'generateImage':
+    case 'qwenGenerateImage':
+    case 'wanxGenerateImage': return Picture
+    case 'dateTimeTool':   return Clock
+    default:               return MagicStick
+  }
+}
+
+/** 消息 id -> 是否展开来源列表；默认全部折叠 */
+const expandedSources = ref(new Set())
+
+function toggleSources(messageId) {
+  if (!messageId) return
+  const set = new Set(expandedSources.value)
+  if (set.has(messageId)) set.delete(messageId)
+  else set.add(messageId)
+  expandedSources.value = set
+}
+
+function isSourcesOpen(messageId) {
+  return expandedSources.value.has(messageId)
+}
+
+/** 截断 chip summary 避免超长损坏布局 */
+function truncateSummary(text) {
+  if (!text) return ''
+  const max = 18
+  return text.length > max ? text.slice(0, max) + '…' : text
+}
+
+/** 工具调用 chip 颜色（决定 CSS 变体名）*/
+function toolChipType(name) {
+  switch (name) {
+    case 'searchArticles': return 'primary'
+    case 'webSearch':      return 'success'
+    case 'generateImage':
+    case 'qwenGenerateImage':
+    case 'wanxGenerateImage': return 'warning'
+    case 'dateTimeTool':   return 'info'
+    default:               return ''
+  }
+}
+
+/* ===== 输入栏占位按钮（功能待实现）===== */
+const webSearchEnabled = ref(false)
+
+function onUploadFileClick() {
+  ElMessage.info('文件上传功能开发中，敬请期待')
+}
+
+function onToggleWebSearch() {
+  webSearchEnabled.value = !webSearchEnabled.value
+  ElMessage.info(
+    webSearchEnabled.value
+      ? '联网搜索切换为开启（功能开发中，本次开关暂不影响 AI 行为）'
+      : '联网搜索切换为关闭'
+  )
+}
+
 async function handleSend() {
+  if (!requireLogin('请先登录后再发送消息')) return
   const content = inputText.value.trim()
   if (!content || isSendingHere.value) return
 
@@ -518,24 +770,79 @@ async function handleSend() {
 
   // 标记发送中的会话 id；切换到其他会话时 isSendingHere 会变 false，思考气泡不再显示
   sendingForId.value = idForThisSend
+
+  // 占位 assistant 消息：随 SSE delta 增量更新内容
+  // 注意：push 进 ref 数组后，必须用数组里的 reactive proxy 引用，
+  // 否则修改原对象不会触发视图更新（Vue 3 ref 会把内层对象自动转为 reactive）。
+  let placeholder = {
+    id: 'tmp-ai-' + Date.now(),
+    role: 'assistant',
+    content: '',
+    sources: [],
+    toolCalls: [],
+    createTime: new Date().toISOString(),
+    streaming: true,
+  }
+  let placeholderPushed = false
+  const ensurePlaceholder = () => {
+    if (placeholderPushed) return
+    if (activeSessionId.value !== idForThisSend) return
+    messages.value.push(placeholder)
+    // 重新拿数组里的 reactive proxy，后续所有改动都走它才会触发响应式
+    placeholder = messages.value[messages.value.length - 1]
+    placeholderPushed = true
+    // placeholder 一入栈就不再需要 thinking 占位气泡
+    if (sendingForId.value === idForThisSend) {
+      sendingForId.value = null
+    }
+  }
+
+  let stopped = false
   try {
-    const res = await sendChat({
-      sessionId: idForThisSend,
-      content,
-    })
-    const reply = res.data
-    if (reply) {
-      if (activeSessionId.value === reply.sessionId) {
-        optimistic.id = reply.userMessageId || optimistic.id
-        messages.value.push({
-          id: reply.assistantMessageId,
-          role: 'assistant',
-          content: reply.content,
-          createTime: new Date().toISOString(),
-        })
-        await scrollToBottom()
-      }
+    await streamChat(
+        { sessionId: idForThisSend, content },
+        {
+          onMeta: (data) => {
+            if (data?.userMessageId) optimistic.id = data.userMessageId
+            ensurePlaceholder()
+          },
+          onToolCall: (invocation) => {
+            ensurePlaceholder()
+            if (invocation && placeholder.toolCalls) {
+              placeholder.toolCalls.push(invocation)
+            }
+          },
+          onSources: (sources) => {
+            ensurePlaceholder()
+            if (Array.isArray(sources)) placeholder.sources = sources
+          },
+          onDelta: (data) => {
+            ensurePlaceholder()
+            if (data?.text) {
+              placeholder.content += data.text
+              scrollToBottom()
+            }
+          },
+          onDone: (data) => {
+            ensurePlaceholder()
+            placeholder.streaming = false
+            if (data?.assistantMessageId) placeholder.id = data.assistantMessageId
+            if (data?.content) placeholder.content = data.content
+          },
+          onError: (err) => {
+            stopped = true
+            if (placeholderPushed) {
+              const idx = messages.value.findIndex(m => m === placeholder)
+              if (idx > -1) messages.value.splice(idx, 1)
+            }
+            ElMessage.error(err?.message || 'AI 服务暂时不可用')
+          },
+        },
+    ).done
+
+    if (!stopped) {
       await loadSessions()
+      await scrollToBottom()
     }
   } catch (e) {
     if (activeSessionId.value === idForThisSend) {
@@ -576,6 +883,47 @@ function formatTime(dt) {
 </script>
 
 <style scoped>
+/* ========== 未登录提示卡 ========== */
+.agent-login-required {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-prompt-card {
+  width: min(480px, 92%);
+  padding: 40px 32px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+  text-align: center;
+}
+
+.login-prompt-logo {
+  width: 96px;
+  height: 96px;
+  border-radius: 24px;
+  object-fit: contain;
+  margin-bottom: 16px;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.12));
+}
+
+.login-prompt-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 8px 0 12px;
+  color: var(--el-text-color-primary);
+}
+
+.login-prompt-desc {
+  font-size: 14px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 24px;
+  line-height: 1.7;
+}
+
 /* ========== 整体布局 ========== */
 .agent-page {
   display: flex;
@@ -967,6 +1315,230 @@ function formatTime(dt) {
   border-top-right-radius: 0;
 }
 
+/* ========== 工具调用 chips ========== */
+.tool-calls-block {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 280px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  font-size: 12px;
+  line-height: 1;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-regular);
+  border: 1px solid var(--el-border-color-lighter);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tool-chip--primary {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary-light-7);
+}
+
+.tool-chip--success {
+  background: var(--el-color-success-light-9);
+  color: var(--el-color-success);
+  border-color: var(--el-color-success-light-7);
+}
+
+.tool-chip--warning {
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning);
+  border-color: var(--el-color-warning-light-7);
+}
+
+.tool-chip--info {
+  background: var(--el-color-info-light-9);
+  color: var(--el-color-info);
+  border-color: var(--el-color-info-light-7);
+}
+
+.tool-chip-icon {
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.tool-chip-text {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tool-chip-label {
+  font-weight: 500;
+}
+
+.tool-chip-summary {
+  margin-left: 4px;
+  color: var(--el-text-color-secondary);
+  font-weight: 400;
+}
+
+/* ========== 输入栏 composer ========== */
+.composer {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--el-border-color);
+  border-radius: 12px;
+  padding: 4px 8px;
+  background: var(--el-bg-color);
+  transition: border-color 0.15s;
+}
+
+.composer:focus-within {
+  border-color: var(--el-color-primary);
+}
+
+.composer .chat-textarea :deep(.el-textarea__inner) {
+  border: none !important;
+  box-shadow: none !important;
+  padding: 4px 4px 0 !important;
+  min-height: 28px !important;
+  background: transparent;
+  line-height: 1.5;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 0;
+  margin-top: 2px;
+}
+
+.composer-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.composer-action {
+  color: var(--el-text-color-regular);
+}
+
+.composer-toggle {
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 14px;
+}
+
+.composer-toggle .toggle-label {
+  font-size: 12px;
+}
+
+.composer-toggle.active {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+}
+
+/* ========== 来源引用卡片 ========== */
+.source-card-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-regular);
+  margin-right: 4px;
+}
+
+.source-card-host {
+  color: var(--el-text-color-secondary);
+}
+
+.sources-block {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--el-border-color-light);
+}
+
+.sources-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px 6px;
+  transition: background-color 0.15s;
+}
+
+.sources-title:hover {
+  background: var(--el-fill-color-light);
+}
+
+.sources-toggle-icon {
+  margin-left: auto;
+  transition: transform 0.2s ease;
+  color: var(--el-text-color-secondary);
+}
+
+.sources-toggle-icon.is-open {
+  transform: rotate(180deg);
+}
+
+.sources-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-card {
+  flex: 1 1 calc(50% - 8px);
+  min-width: 200px;
+  max-width: 100%;
+  padding: 8px 12px;
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, transform 0.15s;
+}
+
+.source-card:hover {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
+  transform: translateY(-1px);
+}
+
+.source-card-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.source-card-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+
 /* ========== 思考动画 ========== */
 .bubble.thinking {
   display: flex;
@@ -994,14 +1566,17 @@ function formatTime(dt) {
 /* ========== 输入区：仅保留输入框形状，无 footer 背景与上边框 ========== */
 .chat-input-bar {
   display: flex;
-  align-items: flex-end;
-  gap: 10px;
+  justify-content: center;
   max-width: 760px;
   width: 100%;
   margin: 0 auto;
   padding: 12px 16px 18px;
   background: transparent;
   border-top: none;
+}
+
+.composer {
+  width: 100%;
 }
 
 .chat-textarea {

@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -24,4 +26,10 @@ public class ChatReplyVO {
 
     @Schema(description = "AI 回复内容")
     private String content;
+
+    @Schema(description = "本次回答引用到的站内文章列表（按相似度去重后的精简信息）")
+    private List<ArticleSourceVO> sources;
+
+    @Schema(description = "本次回答中 AI 调用过的工具列表（按调用顺序）")
+    private List<ToolInvocationVO> toolCalls;
 }

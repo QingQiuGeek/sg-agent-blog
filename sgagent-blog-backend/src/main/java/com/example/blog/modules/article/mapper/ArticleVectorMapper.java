@@ -1,7 +1,11 @@
 package com.example.blog.modules.article.mapper;
 
 import com.example.blog.modules.article.model.entity.ArticleVector;
+import com.example.blog.modules.article.model.vo.ArticleHitVO;
 import org.apache.ibatis.annotations.*;
+
+import java.util.List;
+import java.util.Map;
 
 /**
  * 文章向量表 Mapper
@@ -36,4 +40,33 @@ public interface ArticleVectorMapper {
      */
     @Delete("DELETE FROM article_vector WHERE article_id = #{articleId}")
     int deleteByArticleId(@Param("articleId") Long articleId);
+
+    /**
+     * 拉取所有可检索的文章向量及其元信息，余弦距离在 Java 端计算
+     * <p>
+     * 之所以不在 SQL 里做 top-K：MySQL 9.x 社区版只提供 STRING_TO_VECTOR / VECTOR_TO_STRING，
+     * DISTANCE 函数仅 HeatWave 与 Oracle Cloud 版本支持，社区版调用会报
+     * "FUNCTION DISTANCE does not exist"。
+     * <p>
+     * 数据量上来后可以换成 pgvector / Milvus，或升级到 HeatWave 启用真正的向量索引。
+     */
+    @Select("""
+            SELECT a.id              AS articleId,
+                   a.title           AS title,
+                   a.summary         AS summary,
+                   a.cover           AS cover,
+                   a.view_count      AS viewCount,
+                   a.like_count      AS likeCount,
+                   a.favorite_count  AS favoriteCount,
+                   a.create_time     AS publishTime,
+                   a.user_id         AS authorId,
+                   u.nickname        AS authorNickname,
+                   VECTOR_TO_STRING(av.embedding) AS embeddingStr
+            FROM article_vector av
+            JOIN blog_article a ON a.id = av.article_id
+            LEFT JOIN sys_user u ON u.id = a.user_id
+            WHERE a.is_deleted = 0
+              AND a.status = 1
+            """)
+    List<Map<String, Object>> listAllForSearch();
 }

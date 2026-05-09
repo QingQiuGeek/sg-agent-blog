@@ -147,7 +147,17 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
-
+        <!--文件内容提取解析        -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>2.9.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parsers-standard-package</artifactId>
+            <version>2.9.0</version>
+        </dependency>
         <!-- Quartz定时任务框架 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -159,6 +169,12 @@
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
             <version>1.11.0-beta19</version>
+        </dependency>
+        <!-- 阿里云百炼 dashscope，使用       -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>dashscope-sdk-java</artifactId>
+            <version>2.22.6</version>
         </dependency>
         <!--langchain4j -->
         <dependency>

@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.SecureUtil;
 import com.example.blog.modules.article.mapper.ArticleVectorMapper;
 import com.example.blog.modules.article.model.entity.ArticleVector;
+import com.example.blog.modules.article.model.vo.ArticleHitVO;
 import com.example.blog.modules.article.service.ArticleVectorService;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
@@ -14,6 +15,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
 import java.util.StringJoiner;
 
 @Slf4j
@@ -72,6 +79,95 @@ public class ArticleVectorServiceImpl implements ArticleVectorService {
         } catch (Exception e) {
             // 向量化失败不能影响文章发布主流程，仅记录日志由人工/补偿任务处理
             log.error("文章 {} 向量化失败：{}", articleId, e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public List<ArticleHitVO> searchByQuery(String query, int topK) {
+        if (StrUtil.isBlank(query)) {
+            return Collections.emptyList();
+        }
+        int safeTopK = Math.min(Math.max(topK, 1), 20);
+        long start = System.currentTimeMillis();
+        try {
+            Response<Embedding> response = embeddingModel.embed(query);
+            float[] qv = response.content().vector();
+
+            // MySQL 9 社区版没有 DISTANCE 函数，余弦相似度在 Java 端算
+            List<Map<String, Object>> rows = articleVectorMapper.listAllForSearch();
+            List<ArticleHitVO> hits = new ArrayList<>(rows.size());
+            for (Map<String, Object> row : rows) {
+                String embStr = (String) row.get("embeddingStr");
+                if (StrUtil.isBlank(embStr)) {
+                    continue;
+                }
+                float[] dv = parseVector(embStr);
+                if (dv.length != qv.length) {
+                    continue;
+                }
+                double score = cosineSimilarity(qv, dv);
+
+                ArticleHitVO hit = new ArticleHitVO();
+                hit.setArticleId(toLong(row.get("articleId")));
+                hit.setTitle((String) row.get("title"));
+                hit.setSummary((String) row.get("summary"));
+                hit.setCover((String) row.get("cover"));
+                hit.setViewCount(toLong(row.get("viewCount")));
+                hit.setLikeCount(toLong(row.get("likeCount")));
+                hit.setFavoriteCount(toLong(row.get("favoriteCount")));
+                Object pt = row.get("publishTime");
+                if (pt instanceof LocalDateTime ldt) {
+                    hit.setPublishTime(ldt);
+                }
+                hit.setAuthorId(toLong(row.get("authorId")));
+                hit.setAuthorNickname((String) row.get("authorNickname"));
+                hit.setScore(score);
+                hits.add(hit);
+            }
+            hits.sort(Comparator.comparingDouble(ArticleHitVO::getScore).reversed());
+            List<ArticleHitVO> topHits = hits.size() > safeTopK ? hits.subList(0, safeTopK) : hits;
+            log.info("文章语义检索：query=[{}], topK={}, scanned={}, hits={}, cost={}ms",
+                    query, safeTopK, rows.size(), topHits.size(), System.currentTimeMillis() - start);
+            return new ArrayList<>(topHits);
+        } catch (Exception e) {
+            log.error("文章语义检索失败：query=[{}]，{}", query, e.getMessage(), e);
+            return Collections.emptyList();
+        }
+    }
+
+    /** 解析 STRING_TO_VECTOR 的字符串形式（形如 "[0.1,-0.2,...]"） */
+    private float[] parseVector(String s) {
+        String trimmed = s.trim();
+        if (trimmed.startsWith("[")) trimmed = trimmed.substring(1);
+        if (trimmed.endsWith("]")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+        if (trimmed.isEmpty()) return new float[0];
+        String[] parts = trimmed.split(",");
+        float[] arr = new float[parts.length];
+        for (int i = 0; i < parts.length; i++) {
+            arr[i] = Float.parseFloat(parts[i].trim());
+        }
+        return arr;
+    }
+
+    /** 余弦相似度 [-1,1]，越大越相似；维度已校验 */
+    private double cosineSimilarity(float[] a, float[] b) {
+        double dot = 0, na = 0, nb = 0;
+        for (int i = 0; i < a.length; i++) {
+            dot += a[i] * b[i];
+            na += a[i] * a[i];
+            nb += b[i] * b[i];
+        }
+        if (na == 0 || nb == 0) return 0;
+        return dot / (Math.sqrt(na) * Math.sqrt(nb));
+    }
+
+    private Long toLong(Object o) {
+        if (o == null) return null;
+        if (o instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(o.toString());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

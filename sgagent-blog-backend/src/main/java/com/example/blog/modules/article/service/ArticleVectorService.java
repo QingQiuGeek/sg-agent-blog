@@ -1,8 +1,12 @@
 package com.example.blog.modules.article.service;
 
+import com.example.blog.modules.article.model.vo.ArticleHitVO;
+
+import java.util.List;
+
 /**
- * 文章向量化服务：负责调用 EmbeddingModel 把文章正文转成向量并落库
- * 当前阶段只做"写入"，向量检索功能后续单独实现
+ * 文章向量化服务：负责调用 EmbeddingModel 把文章正文转成向量并落库，
+ * 同时提供基于余弦距离的语义检索能力，供 AI Agent Tool 调用。
  */
 public interface ArticleVectorService {
 
@@ -16,4 +20,12 @@ public interface ArticleVectorService {
      * 删除文章对应的向量记录
      */
     void deleteByArticleId(Long articleId);
+
+    /**
+     * 基于自然语言查询做语义检索，返回 top-K 已发布文章及其元信息
+     *
+     * @param query 用户查询文本（自然语言）
+     * @param topK  返回前 K 条，建议 1-10
+     */
+    List<ArticleHitVO> searchByQuery(String query, int topK);
 }

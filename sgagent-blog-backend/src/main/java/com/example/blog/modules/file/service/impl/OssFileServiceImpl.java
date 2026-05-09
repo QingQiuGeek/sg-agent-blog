@@ -88,10 +88,8 @@ public class OssFileServiceImpl implements FileService {
             ossClient.putObject(bucket, fileName, new ByteArrayInputStream(fileData));
 
             // 拼接完整访问 URL：https://bucket.endpoint/fileName
-            String finalEndpoint = endpoint.endsWith(StrUtil.SLASH) ? endpoint : endpoint + StrUtil.SLASH;
-            // 将 https://oss-cn-xxx.aliyuncs.com/ 转为 https://bucket.oss-cn-xxx.aliyuncs.com/
-            String accessUrl = finalEndpoint.replace("https://", "https://" + bucket + ".");
-            return accessUrl + fileName;
+            // 注意：application.yml 中 oss.url 配置的是裸域名（不含协议头），所以直接拼 https://
+            return "https://" + bucket + "." + endpoint + "/" + fileName;
         } catch (Exception e) {
             log.error("阿里云OSS字节流上传失败", e);
             throw new CustomerException(ResultCode.INTERNAL_SERVER_ERROR, MessageConstants.MSG_UPLOAD_FAILURE);
