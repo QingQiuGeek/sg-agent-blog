@@ -5,35 +5,35 @@ langchain4j:
   open-ai:
     chat-model:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      api-key: ${BAILIAN_API_KEY:}
+      api-key: 
       model-name: qwen3.6-flash-2026-04-16
       # 调试时改 true 可看到完整 HTTP 请求/响应（含全部 tools schema），生产建议关闭
       log-requests: false
       log-responses: false
     streaming-chat-model:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      api-key: ${BAILIAN_API_KEY:}
+      api-key: 
       model-name: glm-5.1
       log-requests: false
       log-responses: false
     embedding-model:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      api-key: ${BAILIAN_API_KEY:}
+      api-key: 
       model-name: text-embedding-v3
       dimensions: 1024
 
 image-model:
   qwen:
     model-name: qwen-image-2.0-pro
-    api-key: ${DASHSCOPE_API_KEY:}
+    api-key: 
   wanx:
     model-name: wan2.7-image-pro
-    api-key: ${DASHSCOPE_API_KEY:}
+    api-key: 
 
 # Tavily 联网搜索（WebSearchTool 使用，未配置时该工具调用会返回错误 JSON 不会中断流程）
 tavily:
   url: https://api.tavily.com/search
-  api-key: ${TAVILY_API_KEY:}
+  api-key:
 
 
 spring:
@@ -46,8 +46,8 @@ spring:
   # 数据库配置
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    username: ${MYSQL_USER_NAME:}
-    password: ${MYSQL_PASSWORD:}
+    username:
+    password:
     url: jdbc:mysql://localhost:3306/sg-agent-blog?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
   # Redis配置
   data:
@@ -81,9 +81,9 @@ spring:
     ## 配置邮件服务器的端口（465或587）
     port: 465
     ## 配置邮箱账号
-    username: ${MAIL_USER_NAME:}
+    username:
     ## 配置邮箱授权码
-    password: ${MAIL_AUTH_CODE:}
+    password:
     # 配置默认编码
     default-encoding: UTF-8
     properties:
@@ -109,13 +109,13 @@ mybatis-plus:
 
 blog:
   # 站长社交链接配置
-  github-url: 'https://github.com/QingQiuGeek'
+  github-url:
   admin:
     # 接收系统通知（如用户反馈）的管理员邮箱
-    email: wzhaust@qq.com
+    email:
   jwt:
     # 签名密钥：生产环境请务必使用复杂的随机字符串（建议32位以上）
-    secret: ${JWT_SECRET:}
+    secret: 123456
     # 针对不同角色配置过期时间
     expire:
       user-days: 7          # 普通用户 7 天
@@ -151,10 +151,10 @@ aj:
     water-mark: SGAgent-Blog
     bypass:
       enabled: false
-      master-key: ${CAPTCHA_BYPASS_KEY:}
+      master-key:
 
 oss:
-  accessKey: ${OSS_ACCESS_KEY:}
-  secretKey: ${OSS_SECRET_KEY:}
-  bucket: ${OSS_BUCKET:sg-agent-blog}
-  url: ${OSS_ENDPOINT:oss-cn-beijing.aliyuncs.com}
+  accessKey:
+  secretKey:
+  bucket:
+  url:

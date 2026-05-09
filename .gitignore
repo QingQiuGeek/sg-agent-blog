@@ -86,3 +86,4 @@ application-prod.properties
 .env
 /example/
 sg-agent-blog-pg.sql
+sgagent-blog-backend\src\main\resources\application-local.yml
